@@ -1,0 +1,45 @@
+{
+  "UUID": "dev.mikanseilaboratory.vmix",
+  "Name": "vMix [MikanseiLaboratory]",
+  "Author": "未完成成果物研究所",
+  "Description": "Control any number of vMix instances from Stream Deck.",
+  "Version": "0.1.0.0",
+  "Icon": "images/icon",
+  "Category": "vMix [MikanseiLaboratory]",
+  "CategoryIcon": "images/icon",
+  "CodePath": "bin/plugin",
+  "CodePathWin": "bin/plugin.exe",
+  "CodePathMac": "bin/plugin",
+  "PropertyInspectorPath": "propertyinspector/index.html",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.4"
+  },
+  "OS": [
+    { "Platform": "windows", "MinimumVersion": "10" },
+    { "Platform": "mac", "MinimumVersion": "10.15" }
+  ],
+  "Actions": [
+    { "UUID": "dev.mikanseilaboratory.vmix.program", "Name": "Program", "Icon": "images/icon", "Tooltip": "Switch the program input.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.preview", "Name": "Preview", "Icon": "images/icon", "Tooltip": "Switch the preview input.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.transition", "Name": "Transition", "Icon": "images/icon", "Tooltip": "Run Cut, Fade, or a named effect.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.stinger", "Name": "Stinger", "Icon": "images/icon", "Tooltip": "Run stinger 1 through 8.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.fadetoblack", "Name": "Fade to Black", "Icon": "images/icon", "Tooltip": "Toggle fade to black.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.overlay", "Name": "Overlay", "Icon": "images/icon", "Tooltip": "Control overlay 1 through 8.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.recording", "Name": "Recording", "Icon": "images/icon", "Tooltip": "Toggle recording.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.streaming", "Name": "Streaming", "Icon": "images/icon", "Tooltip": "Toggle streaming.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.external", "Name": "External", "Icon": "images/icon", "Tooltip": "Toggle external output.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.multicorder", "Name": "MultiCorder", "Icon": "images/icon", "Tooltip": "Toggle MultiCorder.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.fullscreen", "Name": "Fullscreen", "Icon": "images/icon", "Tooltip": "Toggle fullscreen.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.replay", "Name": "Replay", "Icon": "images/icon", "Tooltip": "Play, pause, or mark a replay.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.mute", "Name": "Mute", "Icon": "images/icon", "Tooltip": "Toggle mute. Lit means muted.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.solo", "Name": "Solo", "Icon": "images/icon", "Tooltip": "Toggle solo.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.bussend", "Name": "Bus Send", "Icon": "images/icon", "Tooltip": "Toggle a bus send.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.play", "Name": "Play", "Icon": "images/icon", "Tooltip": "Play or pause an input.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.list", "Name": "List", "Icon": "images/icon", "Tooltip": "Move a list input.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }, { "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.title", "Name": "Title", "Icon": "images/icon", "Tooltip": "Set title text or an image.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.shortcut", "Name": "Shortcut", "Icon": "images/icon", "Tooltip": "Send a vMix shortcut function.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.raw", "Name": "Raw TCP", "Icon": "images/icon", "Tooltip": "Send a raw TCP command.", "Controllers": ["Keypad"], "States": [{ "Image": "images/icon" }] },
+    { "UUID": "dev.mikanseilaboratory.vmix.volume", "Name": "Volume Dial", "Icon": "images/icon", "Tooltip": "Adjust volume. Press to mute.", "Controllers": ["Encoder"], "Encoder": { "layout": "$B1" }, "States": [{ "Image": "images/icon" }] }
+  ]
+}

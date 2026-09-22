@@ -1,0 +1,7 @@
+/target
+/pi/node_modules
+/artifacts
+.DS_Store
+crates/vmix-plugin/bindings
+**/*.sdPlugin/bin
+**/*.sdPlugin/propertyinspector
