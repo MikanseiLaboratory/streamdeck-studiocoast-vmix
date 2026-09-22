@@ -1,5 +1,5 @@
 use std::collections::{HashMap, VecDeque};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -134,7 +134,10 @@ impl VmixPool {
         for id in stale {
             if let Some(slot) = slots.remove(&id) {
                 slot.stop.store(true, Ordering::SeqCst);
+                // The session thread exits on recycle or a stale generation, not on stop.
+                slot.recycle.store(true, Ordering::SeqCst);
             }
+            self.inner.generations.lock().expect("generations").remove(&id);
             self.inner.senders.lock().expect("senders").remove(&id);
             self.inner.statuses.lock().expect("statuses").remove(&id);
             self.inner.states.lock().expect("states").remove(&id);
@@ -184,10 +187,8 @@ impl VmixPool {
     }
 
     pub fn statuses(&self) -> Vec<InstanceStatus> {
-        self.inner
-            .configs
-            .lock()
-            .expect("configs")
+        let configs = self.inner.configs.lock().expect("configs").clone();
+        configs
             .iter()
             .filter_map(|config| self.inner.instance_status(&config.id))
             .collect()
@@ -364,24 +365,16 @@ async fn supervise(
     }
 }
 
-/// Prefer IPv4. vMix's TCP API listens on IPv4, and `localhost` often resolves to `::1` first.
+/// Accept only an IP address. Names such as `localhost` are rejected so a stuck DNS lookup cannot leave the instance connecting forever.
 fn resolve_endpoint(host: &str, port: u16) -> Result<SocketAddr, String> {
-    let host = host.trim();
+    let host = host.trim().trim_matches(['[', ']']);
     if host.is_empty() {
         return Err("host is empty".into());
     }
-    let mut matched = None;
-    let authority = format!("{host}:{port}");
-    let addresses = authority
-        .to_socket_addrs()
-        .map_err(|error| format!("could not resolve {authority}: {error}"))?;
-    for addr in addresses {
-        if addr.is_ipv4() {
-            return Ok(addr);
-        }
-        matched.get_or_insert(addr);
-    }
-    matched.ok_or_else(|| format!("could not resolve {authority}"))
+    let ip: IpAddr = host
+        .parse()
+        .map_err(|_| format!("host must be an IP address, not a name ({host})"))?;
+    Ok(SocketAddr::new(ip, port))
 }
 
 fn session(
@@ -600,14 +593,18 @@ mod tests {
     }
 
     #[test]
-    fn localhost_resolves_to_ipv4() {
-        let addr = resolve_endpoint("localhost", 8099).expect("localhost");
-        assert!(addr.is_ipv4());
-        assert_eq!(addr.port(), 8099);
+    fn only_ip_addresses_are_accepted() {
         assert_eq!(
             resolve_endpoint("127.0.0.1", 8099).expect("ipv4"),
             "127.0.0.1:8099".parse().unwrap()
         );
+        assert_eq!(
+            resolve_endpoint("::1", 8099).expect("ipv6"),
+            "[::1]:8099".parse().unwrap()
+        );
+        let rejected = resolve_endpoint("localhost", 8099).expect_err("name");
+        assert!(rejected.contains("IP address"), "{rejected}");
+        assert!(resolve_endpoint("vmix.local", 8099).is_err());
         assert!(resolve_endpoint("  ", 8099).is_err());
     }
 

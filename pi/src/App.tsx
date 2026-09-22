@@ -121,6 +121,13 @@ export function App() {
     send({ type: "ready" });
   }, [send]);
 
+  useEffect(() => {
+    return deck.subscribe("didReceiveGlobalSettings", (payload) => {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+      sendRef.current({ type: "globalSettings", settings: payload });
+    });
+  }, [deck]);
+
   const instances = global.settings.instances ?? [];
   const groups = global.settings.groups ?? [];
   const target = action.settings.common?.target ?? { kind: "all" as const };

@@ -199,7 +199,7 @@ function InstanceCard({
         <input type="color" value={instance.color} aria-label="Color" onChange={(event) => onChange({ ...instance, color: event.target.value })} />
       </div>
       <TextRow label="Name" value={instance.name} onChange={(name) => onChange({ ...instance, name })} />
-      <TextRow label="Host" value={instance.host} onChange={(host) => onChange({ ...instance, host })} />
+      <IpAddressRow value={instance.host} onChange={(host) => onChange({ ...instance, host })} />
       <div className="sdpi-item">
         <div className="sdpi-item-label">Port</div>
         <input
@@ -313,6 +313,44 @@ function Groups({
         </button>
       </div>
     </>
+  );
+}
+
+function isIpAddress(value: string): boolean {
+  if (value.includes(":")) return /^[0-9a-fA-F:]+$/.test(value);
+  const parts = value.split(".");
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+function IpAddressRow({ value, onChange }: { value: string; onChange: (host: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  const commit = () => {
+    const next = draft.trim();
+    if (isIpAddress(next)) {
+      setDraft(next);
+      if (next !== value) onChange(next);
+      return;
+    }
+    setDraft(value);
+  };
+  return (
+    <div className="sdpi-item">
+      <div className="sdpi-item-label">IP address</div>
+      <input
+        className="sdpi-item-value"
+        type="text"
+        inputMode="decimal"
+        spellCheck={false}
+        aria-label="IP address"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onBlur={commit}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") commit();
+        }}
+      />
+    </div>
   );
 }
 

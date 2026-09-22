@@ -5,7 +5,7 @@ Control vMix from Stream Deck over the TCP API (port 8099).
 ## Use
 
 1. In vMix, enable **Settings → Web Controller → TCP API**.
-2. Localhost (`127.0.0.1:8099`) is already listed. Add other machines from **Manage instances**.
+2. `127.0.0.1:8099` is already listed. Other machines are added by IP address from **Manage instances**.
 3. Choose a target. Input and Mix lists come from that vMix.
 
 If it stays on Connecting or Unreachable, the reason is on the instance card. The same lines are appended to:
