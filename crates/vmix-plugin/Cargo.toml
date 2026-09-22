@@ -1,0 +1,36 @@
+[package]
+name = "vmix-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "vmix_plugin"
+path = "src/lib.rs"
+
+[[bin]]
+name = "plugin"
+path = "src/main.rs"
+
+[[bin]]
+name = "typegen"
+path = "src/bin/typegen.rs"
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+serde.workspace = true
+serde_json.workspace = true
+streamdeck-plugin = { version = "0.1", features = ["macros", "typegen"] }
+tokio.workspace = true
+tracing.workspace = true
+ts-rs = "10.1"
+urlencoding.workspace = true
+vmix-pool = { path = "../vmix-pool" }
+vmix-rs.workspace = true
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+vmix-pool = { path = "../vmix-pool", features = ["mock"] }
