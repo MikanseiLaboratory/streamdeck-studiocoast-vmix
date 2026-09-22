@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/vmix-pool", "crates/vmix-plugin"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.0"
 edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
