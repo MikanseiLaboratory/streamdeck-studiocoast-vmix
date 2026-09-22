@@ -15,7 +15,7 @@ Mix の番号は TCP では 1 つずれます。画面上の Mix 2 は `Mix=1`�
 
 ## ビルド
 
-隣のディレクトリに、`vmix-shortcuts` crate を含む `vmix-rs`（ブランチ `feat/vmix-shortcuts`）が必要です。このブランチを `FlowingSPDG/vmix-rs` へ push するまで、GitHub Actions は依存を取得できません。
+隣のディレクトリに、`vmix-shortcuts` crate を含む `vmix-rs`（ブランチ `feat/vmix-shortcuts`）が必要です。GitHub Actions は `MikanseiLaboratory/vmix-rs` のそのブランチを取得します。
 
 ```sh
 cargo test --workspace
