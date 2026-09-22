@@ -6,7 +6,7 @@ import {
   useSettings,
   useStreamDeck
 } from "@mikanseilaboratory/streamdeck-pi-client";
-import type { LiveInput, LiveInstance, VmixConfigBridge } from "./bridge";
+import type { LiveCatalog, LiveInput, LiveInstance, VmixConfigBridge } from "./bridge";
 import type { ActionParams, ActionSettings, GlobalSettings, InstanceConfig, TargetGroup, TargetSelector } from "./generated/contracts";
 import shortcuts from "./generated/shortcuts.json";
 
@@ -46,10 +46,21 @@ const actionDefaults: ActionSettings = {
   params: {}
 };
 
+const localhostInstance = (): InstanceConfig => ({
+  id: "localhost",
+  name: "Localhost",
+  host: "127.0.0.1",
+  port: 8099,
+  color: "#4c8dff",
+  enabled: true,
+  xmlIntervalMs: 2000
+});
+
 const globalDefaults: GlobalSettings = {
-  instances: [],
+  instances: [localhostInstance()],
   groups: [],
-  fgColor: "#f4f7fb"
+  fgColor: "#f4f7fb",
+  seeded: false
 };
 
 const CONFIG_WINDOW = "vmix-config";
@@ -63,7 +74,7 @@ export function App() {
   const action = useSettings<ActionSettings>(actionDefaults);
   const send = useSendToPlugin();
   const [statuses, setStatuses] = useState<LiveInstance[]>([]);
-  const [inputs, setInputs] = useState<Array<{ id: string; inputs: LiveInput[] }>>([]);
+  const [catalogs, setCatalogs] = useState<LiveCatalog[]>([]);
   const settingsRef = useRef(global.settings);
   const statusRef = useRef(statuses);
   const listenersRef = useRef(new Set<(instances: LiveInstance[]) => void>());
@@ -73,9 +84,9 @@ export function App() {
   statusRef.current = statuses;
   sendRef.current = send;
 
-  usePluginMessage((payload: { type?: string; instances?: LiveInstance[]; items?: Array<{ id: string; inputs: LiveInput[] }> }) => {
+  usePluginMessage((payload: { type?: string; instances?: LiveInstance[]; items?: LiveCatalog[] }) => {
     if (payload.type === "status" && payload.instances) setStatuses(payload.instances);
-    if (payload.type === "inputs" && payload.items) setInputs(payload.items);
+    if (payload.type === "inputs" && payload.items) setCatalogs(payload.items);
   });
 
   useEffect(() => {
@@ -178,7 +189,7 @@ export function App() {
           groups={groups}
           settings={action.settings}
           setSettings={action.setSettings}
-          catalogs={inputs}
+          catalogs={catalogs}
         />
       )}
       <div className="sdpi-heading">Connections</div>
@@ -315,7 +326,7 @@ function Params({
   groups: TargetGroup[];
   settings: ActionSettings;
   setSettings: (next: ActionSettings | ((previous: ActionSettings) => ActionSettings)) => void;
-  catalogs: Array<{ id: string; inputs: LiveInput[] }>;
+  catalogs: LiveCatalog[];
 }) {
   const targeted = useMemo(() => instancesForTarget(instances, groups, target), [instances, groups, target]);
   const [selectedId, setSelectedId] = useState(targeted[0]?.id ?? "");
@@ -329,15 +340,14 @@ function Params({
           name: instance.name,
           params: settings.params?.[instance.id] ?? settings.shared ?? emptyParams()
         }));
-  const inputOptions = useMemo(() => {
-    const ids = shared ? targeted.map((instance) => instance.id) : [activeId];
-    const seen = new Map<string, LiveInput>();
-    for (const item of catalogs) {
-      if (!ids.includes(item.id)) continue;
-      for (const input of item.inputs) seen.set(String(input.number), input);
-    }
-    return [...seen.values()];
-  }, [catalogs, shared, targeted, activeId]);
+  const inputOptions = useMemo(
+    () => inputsFor(catalogs, shared ? targeted.map((instance) => instance.id) : [activeId]),
+    [catalogs, shared, targeted, activeId]
+  );
+  const mixOptions = useMemo(
+    () => mixesFor(catalogs, shared ? targeted.map((instance) => instance.id) : [activeId]),
+    [catalogs, shared, targeted, activeId]
+  );
 
   const write = (id: string, params: ActionParams) => {
     setSettings((previous) => {
@@ -367,6 +377,7 @@ function Params({
           kind={kind}
           params={editor.params}
           inputs={inputOptions}
+          mixes={mixOptions}
           onChange={(params) => write(editor.id, params)}
         />
       ))}
@@ -378,14 +389,16 @@ function ActionFields({
   kind,
   params,
   inputs,
+  mixes,
   onChange
 }: {
   kind: string;
   params: ActionParams;
   inputs: LiveInput[];
+  mixes: number[];
   onChange: (params: ActionParams) => void;
 }) {
-  if (kind === "shortcut") return <ShortcutFields params={params} inputs={inputs} onChange={onChange} />;
+  if (kind === "shortcut") return <ShortcutFields params={params} inputs={inputs} mixes={mixes} onChange={onChange} />;
   if (kind === "raw") {
     return <TextArea label="Command" value={params.raw} onChange={(raw) => onChange({ ...params, raw })} />;
   }
@@ -394,7 +407,7 @@ function ActionFields({
       {(kind === "program" || kind === "preview" || kind === "play" || kind === "transition" || kind === "stinger" || kind === "overlay" || kind === "list" || kind === "title") &&
         showsInput(kind, params) && <InputField params={params} inputs={inputs} onChange={onChange} />}
       {(kind === "program" || kind === "preview" || kind === "transition" || kind === "stinger" || kind === "overlay") && showsMix(kind, params) && (
-        <MixField value={params.mix} onChange={(mix) => onChange({ ...params, mix })} />
+        <MixField value={params.mix} mixes={mixes} onChange={(mix) => onChange({ ...params, mix })} />
       )}
       {kind === "transition" && (
         <>
@@ -517,10 +530,12 @@ function TitleFields({ params, onChange }: { params: ActionParams; onChange: (pa
 function ShortcutFields({
   params,
   inputs,
+  mixes,
   onChange
 }: {
   params: ActionParams;
   inputs: LiveInput[];
+  mixes: number[];
   onChange: (params: ActionParams) => void;
 }) {
   const [draft, setDraft] = useState(params.functionName);
@@ -612,7 +627,7 @@ function ShortcutFields({
       {(showAll || needed.has("Input")) && <InputField params={params} inputs={inputs} onChange={onChange} />}
       {(showAll || needed.has("Value")) && <TextField label="Value" value={params.value} onChange={(value) => onChange({ ...params, value })} />}
       {(showAll || needed.has("Channel")) && <TextField label="Channel" value={params.channel} onChange={(channel) => onChange({ ...params, channel })} />}
-      {(showAll || needed.has("Mix")) && <MixField value={params.mix} onChange={(mix) => onChange({ ...params, mix })} />}
+      {(showAll || needed.has("Mix")) && <MixField value={params.mix} mixes={mixes} onChange={(mix) => onChange({ ...params, mix })} />}
       {(showAll || needed.has("Duration")) && <TextField label="Duration" value={params.durationMs} onChange={(durationMs) => onChange({ ...params, durationMs })} />}
       {(showAll || others.length > 0) && (
         <TextField label={others.length > 0 ? others.join(", ") : "Extra"} value={params.extra} onChange={(extra) => onChange({ ...params, extra })} />
@@ -630,31 +645,36 @@ function InputField({
   inputs: LiveInput[];
   onChange: (params: ActionParams) => void;
 }) {
-  const listId = "vmix-inputs";
+  const current = params.input.trim();
+  const known = inputs.some(
+    (input) => String(input.number) === current || input.title === current || input.key === current
+  );
   return (
-    <div className="sdpi-item">
+    <div type="select" className="sdpi-item">
       <div className="sdpi-item-label">Input</div>
-      <input className="sdpi-item-value" type="text" list={listId} value={params.input} onChange={(event) => onChange({ ...params, input: event.target.value })} />
-      <datalist id={listId}>
+      <select className="sdpi-item-value select" value={current} onChange={(event) => onChange({ ...params, input: event.target.value })}>
+        <option value="">{inputs.length === 0 ? "Waiting for inputs" : "Select input"}</option>
+        {current !== "" && !known && <option value={current}>{current}</option>}
         {inputs.map((input) => (
           <option key={`${input.number}-${input.key}`} value={String(input.number)}>
-            {input.title}
+            {inputLabel(input)}
           </option>
         ))}
-      </datalist>
+      </select>
     </div>
   );
 }
 
-function MixField({ value, onChange }: { value: number; onChange: (mix: number) => void }) {
+function MixField({ value, mixes, onChange }: { value: number; mixes: number[]; onChange: (mix: number) => void }) {
+  const current = value === 1 ? 0 : value;
+  const options = mixes.includes(current) ? mixes : [...mixes, current].sort((left, right) => left - right);
   return (
     <div type="select" className="sdpi-item">
       <div className="sdpi-item-label">Mix</div>
-      <select className="sdpi-item-value select" value={String(value === 1 ? 0 : value)} onChange={(event) => onChange(Number(event.target.value))}>
-        <option value="0">Main</option>
-        {Array.from({ length: 15 }, (_, index) => index + 2).map((mix) => (
+      <select className="sdpi-item-value select" value={String(current)} onChange={(event) => onChange(Number(event.target.value))}>
+        {options.map((mix) => (
           <option key={mix} value={mix}>
-            Mix {mix}
+            {mix === 0 ? "Main" : `Mix ${mix}`}
           </option>
         ))}
       </select>
@@ -753,6 +773,40 @@ function selectorFromMode(mode: string, selected: string[]): TargetSelector {
   if (mode.startsWith("group:")) return { kind: "group", id: mode.slice("group:".length) };
   if (mode.startsWith("instance:")) return { kind: "instances", ids: [mode.slice("instance:".length)] };
   return { kind: "all" };
+}
+
+function inputsFor(catalogs: LiveCatalog[], ids: string[]) {
+  const byNumber = new Map<number, LiveInput>();
+  for (const item of catalogs) {
+    if (!ids.includes(item.id)) continue;
+    for (const input of item.inputs) {
+      const existing = byNumber.get(input.number);
+      if (!existing) {
+        byNumber.set(input.number, input);
+        continue;
+      }
+      if (input.title && existing.title !== input.title && !existing.title.split(" / ").includes(input.title)) {
+        byNumber.set(input.number, { ...existing, title: `${existing.title} / ${input.title}` });
+      }
+    }
+  }
+  return [...byNumber.values()].sort((left, right) => left.number - right.number);
+}
+
+function mixesFor(catalogs: LiveCatalog[], ids: string[]) {
+  const known = catalogs.filter((item) => ids.includes(item.id) && item.mixes.length > 0);
+  if (known.length === 0) return [0];
+  const present = new Set<number>();
+  for (const item of known) {
+    for (const mix of item.mixes) present.add(mix === 1 ? 0 : mix);
+  }
+  if (!present.has(0)) present.add(0);
+  return [...present].sort((left, right) => left - right);
+}
+
+function inputLabel(input: LiveInput) {
+  const title = input.title || input.shortTitle || input.key;
+  return title ? `${input.number}: ${title}` : String(input.number);
 }
 
 function instancesForTarget(instances: InstanceConfig[], groups: TargetGroup[], target: TargetSelector) {

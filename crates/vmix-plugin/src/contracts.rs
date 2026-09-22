@@ -96,6 +96,20 @@ impl From<&TargetSelector> for PoolSelector {
     }
 }
 
+pub const LOCALHOST_ID: &str = "localhost";
+
+pub fn localhost_instance() -> InstanceConfig {
+    InstanceConfig {
+        id: LOCALHOST_ID.into(),
+        name: "Localhost".into(),
+        host: default_host(),
+        port: default_port(),
+        color: default_color(),
+        enabled: true,
+        xml_interval_ms: default_interval(),
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[ts(export, rename_all = "camelCase")]
 #[serde(rename_all = "camelCase")]
@@ -106,6 +120,9 @@ pub struct GlobalSettings {
     pub groups: Vec<TargetGroup>,
     #[serde(default = "default_fg")]
     pub fg_color: String,
+    /// Set after the first launch so an empty list is a user choice, not a missing default.
+    #[serde(default)]
+    pub seeded: bool,
 }
 
 fn default_fg() -> String {
@@ -118,6 +135,7 @@ impl Default for GlobalSettings {
             instances: Vec::new(),
             groups: Vec::new(),
             fg_color: default_fg(),
+            seeded: false,
         }
     }
 }

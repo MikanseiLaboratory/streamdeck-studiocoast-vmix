@@ -12,7 +12,11 @@ export type AdvancedSettings = { longPress: boolean, longPressMs: number, };
 
 export type CommonSettings = { target: TargetSelector, sharedParams: boolean, };
 
-export type GlobalSettings = { instances: Array<InstanceConfig>, groups: Array<TargetGroup>, fgColor: string, };
+export type GlobalSettings = { instances: Array<InstanceConfig>, groups: Array<TargetGroup>, fgColor: string, 
+/**
+ * Set after the first launch so an empty list is a user choice, not a missing default.
+ */
+seeded: boolean, };
 
 export type TargetSelector = { "kind": "all" } | { "kind": "group", id: string, } | { "kind": "instances", ids: Array<string>, };
 

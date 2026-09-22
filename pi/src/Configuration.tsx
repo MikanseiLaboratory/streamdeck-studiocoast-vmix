@@ -5,9 +5,20 @@ import type { GlobalSettings, InstanceConfig, TargetGroup } from "./generated/co
 const PALETTE = ["#4c8dff", "#ef5b5b", "#3cba7a", "#e2b15a", "#b07cff", "#4ec8d4", "#f08bbd", "#9aa4b5"];
 
 const emptySettings = (): GlobalSettings => ({
-  instances: [],
+  instances: [
+    {
+      id: "localhost",
+      name: "Localhost",
+      host: "127.0.0.1",
+      port: 8099,
+      color: "#4c8dff",
+      enabled: true,
+      xmlIntervalMs: 2000
+    }
+  ],
   groups: [],
-  fgColor: "#f4f7fb"
+  fgColor: "#f4f7fb",
+  seeded: false
 });
 
 export function Configuration() {
@@ -324,8 +335,10 @@ function statusLabel(kind: string | undefined, status: LiveInstance["status"]) {
     }
     case "connecting":
       return "Connecting";
-    case "unreachable":
-      return "Unreachable";
+    case "unreachable": {
+      const message = status && "message" in status ? status.message : undefined;
+      return message ? `Unreachable · ${message}` : "Unreachable";
+    }
     case "disabled":
       return "Disabled";
     default:

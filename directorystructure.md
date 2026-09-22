@@ -6,7 +6,7 @@ crates/vmix-plugin/       Stream Deck プラグイン本体とアクション
 pi/                       Property Inspector (React)
 plugin/dev.mikanseilaboratory.vmix.sdPlugin/
   manifest.json
-  en.json / ja.json
+  en.json
   images/
   propertyinspector/      Vite のビルド出力
   bin/plugin              macOS ユニバーサルバイナリ

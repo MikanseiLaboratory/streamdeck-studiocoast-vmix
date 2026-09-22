@@ -6,7 +6,7 @@ use streamdeck_plugin::{async_trait, CommandSender, PluginLifecycle, Result, Tar
 use tokio::sync::Mutex;
 use vmix_pool::{resolve_targets, PoolEvent, PoolOptions, VmixPool};
 
-use crate::contracts::{ActionSettings, GlobalSettings};
+use crate::contracts::{localhost_instance, ActionSettings, GlobalSettings};
 use crate::kind::ActionKind;
 use crate::ops;
 use crate::render::{self, Segment, SegmentState};
@@ -57,6 +57,11 @@ impl AppState {
     pub async fn note_sender(&self, sender: CommandSender) {
         let mut current = self.runtime.sender.lock().await;
         if current.is_none() {
+            if std::env::var_os("RUST_LOG").is_none() {
+                std::env::set_var("RUST_LOG", "info");
+            }
+            streamdeck_plugin::init_tracing(sender.clone(), "dev.mikanseilaboratory.vmix");
+            tracing::info!("vmix plugin ready");
             let _ = sender.get_global_settings(None);
             *current = Some(sender);
         }
@@ -67,7 +72,19 @@ impl AppState {
         self.apply_global(settings).await;
     }
 
-    pub async fn apply_global(&self, settings: GlobalSettings) {
+    pub async fn apply_global(&self, mut settings: GlobalSettings) {
+        if !settings.seeded {
+            if settings.instances.is_empty() {
+                settings.instances.push(localhost_instance());
+                tracing::info!("registered default Localhost vMix at 127.0.0.1:8099");
+            }
+            settings.seeded = true;
+            if let Some(sender) = self.runtime.sender.lock().await.clone() {
+                if let Ok(value) = serde_json::to_value(&settings) {
+                    let _ = sender.set_global_settings(&value);
+                }
+            }
+        }
         let instances = settings.instances.iter().cloned().map(Into::into).collect();
         let groups = settings.groups.iter().cloned().map(Into::into).collect();
         self.pool.reconcile(instances, groups).await;
@@ -435,11 +452,14 @@ impl AppState {
                     json!({
                         "number": input.number,
                         "title": input.title,
+                        "shortTitle": input.short_title,
                         "key": input.key,
                     })
                 })
                 .collect();
-            items.push(json!({"id": config.id, "inputs": inputs}));
+            let mut mixes: Vec<u8> = state.mixes_present.iter().copied().collect();
+            mixes.sort_unstable();
+            items.push(json!({"id": config.id, "inputs": inputs, "mixes": mixes}));
         }
         for context in contexts {
             let _ = sender.send_to_property_inspector(&context, &json!({"type": "inputs", "items": items}));
