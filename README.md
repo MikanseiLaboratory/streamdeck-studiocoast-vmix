@@ -2,6 +2,8 @@
 
 Control vMix from Stream Deck over the TCP API (port 8099).
 
+Download the latest plugin from the [releases page](https://github.com/MikanseiLaboratory/streamdeck-studiocoast-vmix/releases/latest).
+
 ## Use
 
 1. In vMix, enable **Settings → Web Controller → TCP API**.
