@@ -42,12 +42,20 @@ macro_rules! vmix_key {
                 Ok(())
             }
 
-            async fn on_key_up(
+            async fn on_key_down(
                 &mut self,
                 _payload: &ActionPayload,
                 ctx: &ActionContext<'_, Self::Settings, Self::State>,
             ) -> Result<()> {
                 ctx.state().press(&ctx.identity().context);
+                Ok(())
+            }
+
+            async fn on_property_inspector_did_appear(
+                &mut self,
+                ctx: &ActionContext<'_, Self::Settings, Self::State>,
+            ) -> Result<()> {
+                ctx.state().inspector_opened(&ctx.identity().context).await;
                 Ok(())
             }
 
@@ -71,7 +79,13 @@ async fn register(
 ) {
     ctx.state().note_sender(ctx.sender().clone()).await;
     ctx.state()
-        .upsert_key(&ctx.identity().context, kind, ctx.settings(), multi)
+        .upsert_key(
+            &ctx.identity().context,
+            kind,
+            &ctx.identity().action_id,
+            ctx.settings(),
+            multi,
+        )
         .await;
 }
 
@@ -147,6 +161,14 @@ impl EncoderAction for VolumeDial {
         ctx: &ActionContext<'_, Self::Settings, Self::State>,
     ) -> Result<()> {
         ctx.state().dial_down(&ctx.identity().context);
+        Ok(())
+    }
+
+    async fn on_property_inspector_did_appear(
+        &mut self,
+        ctx: &ActionContext<'_, Self::Settings, Self::State>,
+    ) -> Result<()> {
+        ctx.state().inspector_opened(&ctx.identity().context).await;
         Ok(())
     }
 

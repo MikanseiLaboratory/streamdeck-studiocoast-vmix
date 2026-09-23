@@ -6,7 +6,7 @@ import {
   useSettings,
   useStreamDeck
 } from "@mikanseilaboratory/streamdeck-pi-client";
-import type { LiveInput, LiveInstance, VmixConfigBridge } from "./bridge";
+import type { LiveCatalog, LiveInput, LiveInstance, VmixConfigBridge } from "./bridge";
 import type { ActionParams, ActionSettings, GlobalSettings, InstanceConfig, TargetGroup, TargetSelector } from "./generated/contracts";
 import shortcuts from "./generated/shortcuts.json";
 
@@ -18,6 +18,7 @@ const SHORTCUTS = shortcuts as ShortcutEntry[];
 
 const emptyParams = (): ActionParams => ({
   input: "",
+  useInputNumber: false,
   mix: 0,
   effect: "Cut",
   durationMs: "",
@@ -46,10 +47,21 @@ const actionDefaults: ActionSettings = {
   params: {}
 };
 
+const localhostInstance = (): InstanceConfig => ({
+  id: "localhost",
+  name: "Localhost",
+  host: "127.0.0.1",
+  port: 8099,
+  color: "#4c8dff",
+  enabled: true,
+  xmlIntervalMs: 2000
+});
+
 const globalDefaults: GlobalSettings = {
-  instances: [],
+  instances: [localhostInstance()],
   groups: [],
-  fgColor: "#f4f7fb"
+  fgColor: "#f4f7fb",
+  seeded: false
 };
 
 const CONFIG_WINDOW = "vmix-config";
@@ -63,7 +75,7 @@ export function App() {
   const action = useSettings<ActionSettings>(actionDefaults);
   const send = useSendToPlugin();
   const [statuses, setStatuses] = useState<LiveInstance[]>([]);
-  const [inputs, setInputs] = useState<Array<{ id: string; inputs: LiveInput[] }>>([]);
+  const [catalogs, setCatalogs] = useState<LiveCatalog[]>([]);
   const settingsRef = useRef(global.settings);
   const statusRef = useRef(statuses);
   const listenersRef = useRef(new Set<(instances: LiveInstance[]) => void>());
@@ -73,9 +85,9 @@ export function App() {
   statusRef.current = statuses;
   sendRef.current = send;
 
-  usePluginMessage((payload: { type?: string; instances?: LiveInstance[]; items?: Array<{ id: string; inputs: LiveInput[] }> }) => {
+  usePluginMessage((payload: { type?: string; instances?: LiveInstance[]; items?: LiveCatalog[] }) => {
     if (payload.type === "status" && payload.instances) setStatuses(payload.instances);
-    if (payload.type === "inputs" && payload.items) setInputs(payload.items);
+    if (payload.type === "inputs" && payload.items) setCatalogs(payload.items);
   });
 
   useEffect(() => {
@@ -109,6 +121,13 @@ export function App() {
   useEffect(() => {
     send({ type: "ready" });
   }, [send]);
+
+  useEffect(() => {
+    return deck.subscribe("didReceiveGlobalSettings", (payload) => {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+      sendRef.current({ type: "globalSettings", settings: payload });
+    });
+  }, [deck]);
 
   const instances = global.settings.instances ?? [];
   const groups = global.settings.groups ?? [];
@@ -178,7 +197,7 @@ export function App() {
           groups={groups}
           settings={action.settings}
           setSettings={action.setSettings}
-          catalogs={inputs}
+          catalogs={catalogs}
         />
       )}
       <div className="sdpi-heading">Connections</div>
@@ -315,7 +334,7 @@ function Params({
   groups: TargetGroup[];
   settings: ActionSettings;
   setSettings: (next: ActionSettings | ((previous: ActionSettings) => ActionSettings)) => void;
-  catalogs: Array<{ id: string; inputs: LiveInput[] }>;
+  catalogs: LiveCatalog[];
 }) {
   const targeted = useMemo(() => instancesForTarget(instances, groups, target), [instances, groups, target]);
   const [selectedId, setSelectedId] = useState(targeted[0]?.id ?? "");
@@ -329,15 +348,12 @@ function Params({
           name: instance.name,
           params: settings.params?.[instance.id] ?? settings.shared ?? emptyParams()
         }));
-  const inputOptions = useMemo(() => {
-    const ids = shared ? targeted.map((instance) => instance.id) : [activeId];
-    const seen = new Map<string, LiveInput>();
-    for (const item of catalogs) {
-      if (!ids.includes(item.id)) continue;
-      for (const input of item.inputs) seen.set(String(input.number), input);
-    }
-    return [...seen.values()];
-  }, [catalogs, shared, targeted, activeId]);
+  const catalogIds = useMemo(
+    () => catalogIdsFor(catalogs, shared ? targeted.map((instance) => instance.id) : [activeId]),
+    [catalogs, shared, targeted, activeId]
+  );
+  const inputOptions = useMemo(() => inputsFor(catalogs, catalogIds), [catalogs, catalogIds]);
+  const mixOptions = useMemo(() => mixesFor(catalogs, catalogIds), [catalogs, catalogIds]);
 
   const write = (id: string, params: ActionParams) => {
     setSettings((previous) => {
@@ -367,6 +383,7 @@ function Params({
           kind={kind}
           params={editor.params}
           inputs={inputOptions}
+          mixes={mixOptions}
           onChange={(params) => write(editor.id, params)}
         />
       ))}
@@ -378,14 +395,16 @@ function ActionFields({
   kind,
   params,
   inputs,
+  mixes,
   onChange
 }: {
   kind: string;
   params: ActionParams;
   inputs: LiveInput[];
+  mixes: number[];
   onChange: (params: ActionParams) => void;
 }) {
-  if (kind === "shortcut") return <ShortcutFields params={params} inputs={inputs} onChange={onChange} />;
+  if (kind === "shortcut") return <ShortcutFields params={params} onChange={onChange} />;
   if (kind === "raw") {
     return <TextArea label="Command" value={params.raw} onChange={(raw) => onChange({ ...params, raw })} />;
   }
@@ -394,7 +413,7 @@ function ActionFields({
       {(kind === "program" || kind === "preview" || kind === "play" || kind === "transition" || kind === "stinger" || kind === "overlay" || kind === "list" || kind === "title") &&
         showsInput(kind, params) && <InputField params={params} inputs={inputs} onChange={onChange} />}
       {(kind === "program" || kind === "preview" || kind === "transition" || kind === "stinger" || kind === "overlay") && showsMix(kind, params) && (
-        <MixField value={params.mix} onChange={(mix) => onChange({ ...params, mix })} />
+        <MixField value={params.mix} mixes={mixes} onChange={(mix) => onChange({ ...params, mix })} />
       )}
       {kind === "transition" && (
         <>
@@ -514,22 +533,15 @@ function TitleFields({ params, onChange }: { params: ActionParams; onChange: (pa
   );
 }
 
-function ShortcutFields({
-  params,
-  inputs,
-  onChange
-}: {
-  params: ActionParams;
-  inputs: LiveInput[];
-  onChange: (params: ActionParams) => void;
-}) {
-  const [draft, setDraft] = useState(params.functionName);
+function ShortcutFields({ params, onChange }: { params: ActionParams; onChange: (params: ActionParams) => void }) {
+  const shown = shortcutText(params);
+  const [draft, setDraft] = useState(shown);
   const draftRef = useRef(draft);
   const paramsRef = useRef(params);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   draftRef.current = draft;
   paramsRef.current = params;
-  useEffect(() => setDraft(params.functionName), [params.functionName]);
+  useEffect(() => setDraft(shown), [shown]);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -537,30 +549,26 @@ function ShortcutFields({
     []
   );
 
-  const commit = (name: string) => {
+  const commit = (line: string) => {
     if (timer.current) {
       clearTimeout(timer.current);
       timer.current = null;
     }
     const current = paramsRef.current;
-    const known = SHORTCUTS.find((item) => item.Name === name);
-    const allowed = new Set(known?.Parameters ?? []);
-    const knownName = Boolean(known);
-    const standard = ["Input", "Value", "Channel", "Mix", "Duration"];
     onChange({
       ...current,
-      functionName: name,
-      input: !knownName || allowed.has("Input") ? current.input : "",
-      value: !knownName || allowed.has("Value") ? current.value : "",
-      channel: !knownName || allowed.has("Channel") ? current.channel : "",
-      mix: !knownName || allowed.has("Mix") ? current.mix : 0,
-      durationMs: !knownName || allowed.has("Duration") ? current.durationMs : "",
-      extra: !knownName || [...allowed].some((item) => !standard.includes(item)) ? current.extra : ""
+      functionName: line.trim(),
+      input: "",
+      value: "",
+      channel: "",
+      mix: 0,
+      durationMs: "",
+      extra: ""
     });
   };
 
+  const term = shortcutFunctionName(draft).toLowerCase();
   const matches = useMemo(() => {
-    const term = draft.trim().toLowerCase();
     if (!term) return [];
     const found: ShortcutEntry[] = [];
     for (const item of SHORTCUTS) {
@@ -570,34 +578,33 @@ function ShortcutFields({
       }
     }
     return found;
-  }, [draft]);
-  const selected = SHORTCUTS.find((item) => item.Name === params.functionName);
-  const needed = new Set(selected?.Parameters ?? []);
-  const others = (selected?.Parameters ?? []).filter((item) => !["Input", "Value", "Channel", "Mix", "Duration"].includes(item));
-  const showAll = !selected;
+  }, [term]);
+  const selected = SHORTCUTS.find((item) => item.Name.toLowerCase() === term);
 
   return (
     <>
       <div className="sdpi-item">
-        <div className="sdpi-item-label">Function</div>
+        <div className="sdpi-item-label">Shortcut</div>
         <input
           className="sdpi-item-value"
           type="text"
           list="shortcut-names"
+          spellCheck={false}
+          placeholder="Function=SetText&Input=1&Value=hello"
           value={draft}
           onChange={(event) => {
-            const name = event.target.value;
-            setDraft(name);
+            const line = event.target.value;
+            setDraft(line);
             if (timer.current) clearTimeout(timer.current);
-            timer.current = setTimeout(() => commit(name), FUNCTION_NAME_COMMIT_MS);
+            timer.current = setTimeout(() => commit(line), FUNCTION_NAME_COMMIT_MS);
           }}
           onBlur={() => {
-            if (draftRef.current !== params.functionName) commit(draftRef.current);
+            if (draftRef.current.trim() !== shortcutText(paramsRef.current)) commit(draftRef.current);
           }}
         />
         <datalist id="shortcut-names">
           {matches.map((item) => (
-            <option key={item.Name} value={item.Name}>
+            <option key={item.Name} value={`Function=${item.Name}`}>
               {item.Description}
             </option>
           ))}
@@ -609,16 +616,46 @@ function ShortcutFields({
           {selected.Parameters && selected.Parameters.length > 0 ? ` · ${selected.Parameters.join(", ")}` : ""}
         </p>
       )}
-      {(showAll || needed.has("Input")) && <InputField params={params} inputs={inputs} onChange={onChange} />}
-      {(showAll || needed.has("Value")) && <TextField label="Value" value={params.value} onChange={(value) => onChange({ ...params, value })} />}
-      {(showAll || needed.has("Channel")) && <TextField label="Channel" value={params.channel} onChange={(channel) => onChange({ ...params, channel })} />}
-      {(showAll || needed.has("Mix")) && <MixField value={params.mix} onChange={(mix) => onChange({ ...params, mix })} />}
-      {(showAll || needed.has("Duration")) && <TextField label="Duration" value={params.durationMs} onChange={(durationMs) => onChange({ ...params, durationMs })} />}
-      {(showAll || others.length > 0) && (
-        <TextField label={others.length > 0 ? others.join(", ") : "Extra"} value={params.extra} onChange={(extra) => onChange({ ...params, extra })} />
-      )}
     </>
   );
+}
+
+function shortcutText(params: ActionParams) {
+  const name = params.functionName.trim();
+  if (shortcutLineIsComplete(name)) return name;
+  const parts: string[] = [];
+  if (name) parts.push(`Function=${name}`);
+  if (params.input.trim()) parts.push(`Input=${params.input.trim()}`);
+  if (params.value) parts.push(`Value=${params.value}`);
+  if (params.channel.trim()) parts.push(`Channel=${params.channel.trim()}`);
+  if (params.mix > 0) parts.push(`Mix=${params.mix}`);
+  if (params.durationMs.trim()) parts.push(`Duration=${params.durationMs.trim()}`);
+  const extra = params.extra.trim().replace(/^&/, "");
+  if (extra) parts.push(extra);
+  return parts.join("&");
+}
+
+function shortcutLineIsComplete(value: string) {
+  const lower = value.toLowerCase();
+  return (
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
+    lower.startsWith("function=") ||
+    lower.startsWith("function ") ||
+    value.includes("&") ||
+    value.includes("?")
+  );
+}
+
+function shortcutFunctionName(line: string) {
+  const text = line.trim();
+  const fromQuery = text.match(/(?:^|[?&])Function=([^&]+)/i);
+  if (fromQuery?.[1]) return decodeURIComponent(fromQuery[1]);
+  const tcp = text.match(/^FUNCTION\s+(\S+)/i);
+  if (tcp?.[1]) return tcp[1];
+  const head = text.split(/[&?\s]/)[0] ?? "";
+  if (head && !head.includes("=")) return head;
+  return "";
 }
 
 function InputField({
@@ -630,31 +667,66 @@ function InputField({
   inputs: LiveInput[];
   onChange: (params: ActionParams) => void;
 }) {
-  const listId = "vmix-inputs";
+  const useNumber = params.useInputNumber === true;
+  const current = params.input.trim();
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
+  useEffect(() => {
+    const match = inputs.find((input) => input.key === current || String(input.number) === current);
+    if (!match) return;
+    const next = inputToken(match, useNumber);
+    if (next === current) return;
+    onChange({ ...paramsRef.current, input: next });
+  }, [inputs, current, useNumber, onChange]);
+  const known = inputs.some(
+    (input) => inputToken(input, useNumber) === current || input.key === current || String(input.number) === current
+  );
   return (
-    <div className="sdpi-item">
-      <div className="sdpi-item-label">Input</div>
-      <input className="sdpi-item-value" type="text" list={listId} value={params.input} onChange={(event) => onChange({ ...params, input: event.target.value })} />
-      <datalist id={listId}>
-        {inputs.map((input) => (
-          <option key={`${input.number}-${input.key}`} value={String(input.number)}>
-            {input.title}
-          </option>
-        ))}
-      </datalist>
-    </div>
+    <>
+      <div type="select" className="sdpi-item">
+        <div className="sdpi-item-label">Input</div>
+        <select className="sdpi-item-value select" value={current} onChange={(event) => onChange({ ...params, input: event.target.value })}>
+          <option value="">{inputs.length === 0 ? "Waiting for inputs" : "Select input"}</option>
+          {current !== "" && !known && <option value={current}>{current}</option>}
+          {inputs.map((input) => (
+            <option key={`${input.number}-${input.key}`} value={inputToken(input, useNumber)}>
+              {inputLabel(input)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <CheckRow
+        label="Number"
+        checked={useNumber}
+        text="Use number instead"
+        onChange={(checked) => {
+          const match = inputs.find((input) => input.key === current || String(input.number) === current);
+          onChange({
+            ...params,
+            useInputNumber: checked,
+            input: match ? inputToken(match, checked) : current
+          });
+        }}
+      />
+    </>
   );
 }
 
-function MixField({ value, onChange }: { value: number; onChange: (mix: number) => void }) {
+function inputToken(input: LiveInput, useNumber: boolean) {
+  if (useNumber || !input.key) return String(input.number);
+  return input.key;
+}
+
+function MixField({ value, mixes, onChange }: { value: number; mixes: number[]; onChange: (mix: number) => void }) {
+  const current = value === 1 ? 0 : value;
+  const options = mixes.includes(current) ? mixes : [...mixes, current].sort((left, right) => left - right);
   return (
     <div type="select" className="sdpi-item">
       <div className="sdpi-item-label">Mix</div>
-      <select className="sdpi-item-value select" value={String(value === 1 ? 0 : value)} onChange={(event) => onChange(Number(event.target.value))}>
-        <option value="0">Main</option>
-        {Array.from({ length: 15 }, (_, index) => index + 2).map((mix) => (
+      <select className="sdpi-item-value select" value={String(current)} onChange={(event) => onChange(Number(event.target.value))}>
+        {options.map((mix) => (
           <option key={mix} value={mix}>
-            Mix {mix}
+            {mix === 0 ? "Main" : `Mix ${mix}`}
           </option>
         ))}
       </select>
@@ -753,6 +825,49 @@ function selectorFromMode(mode: string, selected: string[]): TargetSelector {
   if (mode.startsWith("group:")) return { kind: "group", id: mode.slice("group:".length) };
   if (mode.startsWith("instance:")) return { kind: "instances", ids: [mode.slice("instance:".length)] };
   return { kind: "all" };
+}
+
+function catalogIdsFor(catalogs: LiveCatalog[], ids: string[]) {
+  const wanted = ids.filter((id) => id);
+  const matched = catalogs.filter((item) => wanted.includes(item.id) && item.inputs.length > 0);
+  if (matched.length > 0) return matched.map((item) => item.id);
+  const available = catalogs.filter((item) => item.inputs.length > 0);
+  if (available.length > 0) return available.map((item) => item.id);
+  return wanted;
+}
+
+function inputsFor(catalogs: LiveCatalog[], ids: string[]) {
+  const byNumber = new Map<number, LiveInput>();
+  for (const item of catalogs) {
+    if (!ids.includes(item.id)) continue;
+    for (const input of item.inputs) {
+      const existing = byNumber.get(input.number);
+      if (!existing) {
+        byNumber.set(input.number, input);
+        continue;
+      }
+      if (input.title && existing.title !== input.title && !existing.title.split(" / ").includes(input.title)) {
+        byNumber.set(input.number, { ...existing, title: `${existing.title} / ${input.title}` });
+      }
+    }
+  }
+  return [...byNumber.values()].sort((left, right) => left.number - right.number);
+}
+
+function mixesFor(catalogs: LiveCatalog[], ids: string[]) {
+  const known = catalogs.filter((item) => ids.includes(item.id) && item.mixes.length > 0);
+  if (known.length === 0) return [0];
+  const present = new Set<number>();
+  for (const item of known) {
+    for (const mix of item.mixes) present.add(mix === 1 ? 0 : mix);
+  }
+  if (!present.has(0)) present.add(0);
+  return [...present].sort((left, right) => left - right);
+}
+
+function inputLabel(input: LiveInput) {
+  const title = input.title || input.shortTitle || input.key;
+  return title ? `${input.number}: ${title}` : String(input.number);
 }
 
 function instancesForTarget(instances: InstanceConfig[], groups: TargetGroup[], target: TargetSelector) {

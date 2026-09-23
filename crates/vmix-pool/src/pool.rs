@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::collections::{HashMap, VecDeque};
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -134,7 +134,10 @@ impl VmixPool {
         for id in stale {
             if let Some(slot) = slots.remove(&id) {
                 slot.stop.store(true, Ordering::SeqCst);
+                // The session thread exits on recycle or a stale generation, not on stop.
+                slot.recycle.store(true, Ordering::SeqCst);
             }
+            self.inner.generations.lock().expect("generations").remove(&id);
             self.inner.senders.lock().expect("senders").remove(&id);
             self.inner.statuses.lock().expect("statuses").remove(&id);
             self.inner.states.lock().expect("states").remove(&id);
@@ -184,10 +187,8 @@ impl VmixPool {
     }
 
     pub fn statuses(&self) -> Vec<InstanceStatus> {
-        self.inner
-            .configs
-            .lock()
-            .expect("configs")
+        let configs = self.inner.configs.lock().expect("configs").clone();
+        configs
             .iter()
             .filter_map(|config| self.inner.instance_status(&config.id))
             .collect()
@@ -304,16 +305,17 @@ async fn supervise(
             tokio::time::sleep(Duration::from_millis(200)).await;
             continue;
         }
-        let Ok(addr) = format!("{}:{}", config.host.trim(), config.port).parse::<SocketAddr>() else {
-            inner.set_status(
-                &id,
-                ConnectionStatus::Unreachable {
-                    message: "invalid address".into(),
-                },
-            );
-            tokio::time::sleep(backoff).await;
-            continue;
+        let addr = match resolve_endpoint(&config.host, config.port) {
+            Ok(addr) => addr,
+            Err(message) => {
+                tracing::warn!(id = %id, host = %config.host, port = config.port, %message, "vmix address rejected");
+                inner.set_status(&id, ConnectionStatus::Unreachable { message });
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(inner.options.max_backoff);
+                continue;
+            }
         };
+        tracing::info!(id = %id, host = %config.host, %addr, "vmix connecting");
         inner.set_status(&id, ConnectionStatus::Connecting);
         let generation = inner.bump(&id);
         let (tx, rx) = mpsc::channel();
@@ -328,7 +330,7 @@ async fn supervise(
         let interval = Duration::from_millis(config.xml_interval_ms);
         let session_recycle = recycle.clone();
         thread::spawn(move || {
-            session(
+            let result = session(
                 session_inner,
                 session_id,
                 addr,
@@ -338,9 +340,9 @@ async fn supervise(
                 generation,
                 session_recycle,
             );
-            let _ = done_tx.send(());
+            let _ = done_tx.send(result);
         });
-        let _ = done_rx.await;
+        let outcome = done_rx.await;
         if inner.is_current(&id, generation) {
             inner.senders.lock().expect("senders").remove(&id);
         }
@@ -351,15 +353,28 @@ async fn supervise(
             backoff = inner.options.initial_backoff;
             continue;
         }
-        inner.set_status(
-            &id,
-            ConnectionStatus::Unreachable {
-                message: "connection closed".into(),
-            },
-        );
+        let message = match outcome {
+            Ok(Err(message)) => message,
+            Ok(Ok(())) => "connection closed".into(),
+            Err(_) => "connection closed".into(),
+        };
+        tracing::warn!(id = %id, %addr, %message, "vmix session ended");
+        inner.set_status(&id, ConnectionStatus::Unreachable { message });
         tokio::time::sleep(backoff).await;
         backoff = (backoff * 2).min(inner.options.max_backoff);
     }
+}
+
+/// Accept only an IP address. Names such as `localhost` are rejected so a stuck DNS lookup cannot leave the instance connecting forever.
+fn resolve_endpoint(host: &str, port: u16) -> Result<SocketAddr, String> {
+    let host = host.trim().trim_matches(['[', ']']);
+    if host.is_empty() {
+        return Err("host is empty".into());
+    }
+    let ip: IpAddr = host
+        .parse()
+        .map_err(|_| format!("host must be an IP address, not a name ({host})"))?;
+    Ok(SocketAddr::new(ip, port))
 }
 
 fn session(
@@ -371,43 +386,70 @@ fn session(
     commands: Receiver<Command>,
     generation: u64,
     recycle: Arc<AtomicBool>,
-) {
+) -> Result<(), String> {
     let api = match VmixApi::new(addr, timeout) {
         Ok(api) => api,
         Err(error) => {
-            tracing::debug!(%id, %error, "vmix connect failed");
-            return;
+            let message = error.to_string();
+            tracing::warn!(%id, %addr, %message, "vmix connect failed");
+            return Err(message);
         }
     };
-    let mut startup = startup_commands().into_iter();
-    let mut next_startup = Instant::now();
+    tracing::info!(%id, %addr, "vmix tcp connected");
+    // vmix-rs queues a single inbound line. Sending the next command before that
+    // line is taken stalls the reader, fills the TCP window, and never reaches VERSION.
+    let mut outbound: VecDeque<SendCommand> = startup_commands().into();
     let mut next_poll = Instant::now() + interval;
+    let mut announced_xml = false;
     loop {
         if !inner.is_current(&id, generation) || recycle.load(Ordering::SeqCst) {
-            break;
+            return Ok(());
         }
-        if Instant::now() >= next_startup {
-            if let Some(command) = startup.next() {
-                if api.send_command(command).is_err() {
-                    break;
+        match api.try_receive_command(Duration::from_millis(20)) {
+            Ok(message) => {
+                let is_xml = matches!(message, RecvCommand::XML(_));
+                handle_message(&inner, &id, message);
+                if is_xml && !announced_xml {
+                    announced_xml = true;
+                    if let Some(state) = inner.states.lock().expect("states").get(&id) {
+                        tracing::info!(
+                            %id,
+                            inputs = state.inputs.len(),
+                            mixes = state.mixes_present.len(),
+                            version = %state.version,
+                            edition = %state.edition,
+                            "vmix xml snapshot"
+                        );
+                    }
                 }
-                next_startup = Instant::now() + Duration::from_millis(5);
+            }
+            Err(error) => {
+                let message = error.to_string();
+                let closed = !api.is_connected()
+                    || message.to_ascii_lowercase().contains("closed")
+                    || message.to_ascii_lowercase().contains("disconnect");
+                if closed {
+                    tracing::warn!(%id, %addr, %message, "vmix receive failed");
+                    return Err(message);
+                }
             }
         }
         while let Ok(command) = commands.try_recv() {
-            if dispatch(&api, command).is_err() {
-                return;
-            }
+            enqueue(&mut outbound, command);
         }
-        if !interval.is_zero() && startup.len() == 0 && Instant::now() >= next_poll {
-            let _ = api.send_command(SendCommand::XML);
-            let _ = api.send_command(SendCommand::FUNCTION("ActivatorRefresh".into(), None));
+        if outbound.is_empty() && !interval.is_zero() && Instant::now() >= next_poll {
+            outbound.push_back(SendCommand::XML);
+            outbound.push_back(SendCommand::FUNCTION("ActivatorRefresh".into(), None));
             next_poll = Instant::now() + interval;
         }
-        match api.try_receive_command(Duration::from_millis(20)) {
-            Ok(message) => handle_message(&inner, &id, message),
-            Err(_) if !api.is_connected() => break,
-            Err(_) => {}
+        if let Some(command) = outbound.pop_front() {
+            match api.sender.try_send(command) {
+                Ok(()) => {}
+                Err(TrySendError::Full(command)) => outbound.push_front(command),
+                Err(TrySendError::Disconnected(_)) => {
+                    return Err("tcp sender closed".into());
+                }
+            }
         }
     }
 }
@@ -437,11 +479,11 @@ fn startup_commands() -> Vec<SendCommand> {
     commands
 }
 
-fn dispatch(api: &VmixApi, command: Command) -> Result<(), ()> {
+fn enqueue(outbound: &mut VecDeque<SendCommand>, command: Command) {
     match command {
-        Command::Function { name, query } => api
-            .send_command(SendCommand::FUNCTION(name, query))
-            .map_err(|_| ()),
+        Command::Function { name, query } => {
+            outbound.push_back(SendCommand::FUNCTION(name, query));
+        }
         Command::Raw(raw) => {
             for line in raw.lines() {
                 let line = line.trim();
@@ -452,9 +494,8 @@ fn dispatch(api: &VmixApi, command: Command) -> Result<(), ()> {
                 if !payload.ends_with("\r\n") {
                     payload.push_str("\r\n");
                 }
-                api.send_command(SendCommand::RAW(payload)).map_err(|_| ())?;
+                outbound.push_back(SendCommand::RAW(payload));
             }
-            Ok(())
         }
     }
 }
@@ -462,7 +503,8 @@ fn dispatch(api: &VmixApi, command: Command) -> Result<(), ()> {
 fn handle_message(inner: &Inner, id: &str, message: RecvCommand) {
     match message {
         RecvCommand::VERSION(response) => {
-            let version = response.version.unwrap_or_default();
+            let version = response.version.clone().unwrap_or_default();
+            tracing::info!(%id, %version, "vmix version");
             let edition = inner
                 .states
                 .lock()
@@ -492,7 +534,7 @@ fn handle_message(inner: &Inner, id: &str, message: RecvCommand) {
             let mut states = inner.states.lock().expect("states");
             let state = states.entry(id.to_string()).or_default();
             if let Err(error) = cache::apply_xml(state, &response.body) {
-                tracing::debug!(%id, %error, "vmix xml parse failed");
+                tracing::warn!(%id, %error, "vmix xml parse failed");
             }
             let edition = state.edition.clone();
             let version = state.version.clone();
@@ -548,6 +590,22 @@ mod tests {
         })
         .await
         .expect("instances connected");
+    }
+
+    #[test]
+    fn only_ip_addresses_are_accepted() {
+        assert_eq!(
+            resolve_endpoint("127.0.0.1", 8099).expect("ipv4"),
+            "127.0.0.1:8099".parse().unwrap()
+        );
+        assert_eq!(
+            resolve_endpoint("::1", 8099).expect("ipv6"),
+            "[::1]:8099".parse().unwrap()
+        );
+        let rejected = resolve_endpoint("localhost", 8099).expect_err("name");
+        assert!(rejected.contains("IP address"), "{rejected}");
+        assert!(resolve_endpoint("vmix.local", 8099).is_err());
+        assert!(resolve_endpoint("  ", 8099).is_err());
     }
 
     #[tokio::test]

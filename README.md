@@ -1,21 +1,21 @@
 # vMix [MikanseiLaboratory]
 
-任意の台数の vMix を、Stream Deck から TCP API（既定ポート 8099）で操作するプラグインです。パスワード欄はありません。
+Control vMix from Stream Deck over the TCP API (port 8099).
 
-## できること
+## Use
 
-- Program / Preview、トランジション、Stinger 1〜8、Fade to Black、Overlay 1〜8
-- 録画、配信、外部出力、MultiCorder、フルスクリーン、リプレイ
-- ミュート、ソロ、バス送信、再生、リスト、タイトル
-- ショートカット関数と Raw TCP
-- Stream Deck+ の音量ダイヤル
-- 接続先は All / Group / 個別。Mix は Main と Mix 2〜16 です
+1. In vMix, enable **Settings → Web Controller → TCP API**.
+2. `127.0.0.1:8099` is already listed. Other machines are added by IP address from **Manage instances**.
+3. Choose a target. Input and Mix lists come from that vMix.
 
-Mix の番号は TCP では 1 つずれます。画面上の Mix 2 は `Mix=1`、フィードバックは `InputMix2` です。
+If it stays on Connecting or Unreachable, the reason is on the instance card. The same lines are appended to:
 
-## ビルド
+- Windows: `%APPDATA%\Elgato\StreamDeck\logs\dev.mikanseilaboratory.vmix.log`
+- macOS: `~/Library/Logs/ElgatoStreamDeck/dev.mikanseilaboratory.vmix.log`
 
-隣のディレクトリに、`vmix-shortcuts` crate を含む `vmix-rs`（ブランチ `feat/vmix-shortcuts`）が必要です。GitHub Actions は `MikanseiLaboratory/vmix-rs` のそのブランチを取得します。
+## Build
+
+`vmix-rs` (branch `feat/vmix-shortcuts`) must be checked out next to this repo.
 
 ```sh
 cargo test --workspace
@@ -23,4 +23,4 @@ cargo run -p vmix-plugin --bin typegen
 cd pi && npm install && npm run build
 ```
 
-ローカルへ入れる場合は `INSTALL=1 ./publish.sh` です。
+`INSTALL=1 ./publish.sh` installs the local build.
