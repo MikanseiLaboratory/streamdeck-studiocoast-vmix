@@ -114,9 +114,10 @@ pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> 
     match kind {
         ActionKind::Volume => level_to_percent(volume_level(state, params)).to_string(),
         ActionKind::Shortcut => shortcut_name(params),
-        ActionKind::Program | ActionKind::Preview | ActionKind::Play | ActionKind::Mute => {
-            params.input.clone()
-        }
+        ActionKind::Program | ActionKind::Preview | ActionKind::Play | ActionKind::Mute => state
+            .resolve_input(&params.input)
+            .map(|number| number.to_string())
+            .unwrap_or_else(|| params.input.clone()),
         ActionKind::Overlay => format!("OL{}", params.overlay.clamp(1, 8)),
         ActionKind::Stinger => format!("ST{}", params.stinger.clamp(1, 8)),
         ActionKind::List => state

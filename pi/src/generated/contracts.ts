@@ -4,6 +4,10 @@ export type ActionSettings = { common: CommonSettings, advanced: AdvancedSetting
 
 export type ActionParams = { input: string, 
 /**
+ * When set, `input` is the vMix input number. Otherwise it is the input GUID.
+ */
+useInputNumber: boolean, 
+/**
  * `0` is Main. `2`..=`16` are Mix 2 through Mix 16.
  */
 mix: number, effect: string, durationMs: string, overlay: number, overlayMode: string, stinger: number, replayAction: string, channel: string, audioTarget: string, bus: string, listAction: string, index: string, titleAction: string, value: string, selectedName: string, functionName: string, extra: string, raw: string, step: number, };

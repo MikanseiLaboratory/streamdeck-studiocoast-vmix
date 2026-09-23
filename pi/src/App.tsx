@@ -18,6 +18,7 @@ const SHORTCUTS = shortcuts as ShortcutEntry[];
 
 const emptyParams = (): ActionParams => ({
   input: "",
+  useInputNumber: false,
   mix: 0,
   effect: "Cut",
   durationMs: "",
@@ -666,24 +667,54 @@ function InputField({
   inputs: LiveInput[];
   onChange: (params: ActionParams) => void;
 }) {
+  const useNumber = params.useInputNumber === true;
   const current = params.input.trim();
+  const paramsRef = useRef(params);
+  paramsRef.current = params;
+  useEffect(() => {
+    const match = inputs.find((input) => input.key === current || String(input.number) === current);
+    if (!match) return;
+    const next = inputToken(match, useNumber);
+    if (next === current) return;
+    onChange({ ...paramsRef.current, input: next });
+  }, [inputs, current, useNumber, onChange]);
   const known = inputs.some(
-    (input) => String(input.number) === current || input.title === current || input.key === current
+    (input) => inputToken(input, useNumber) === current || input.key === current || String(input.number) === current
   );
   return (
-    <div type="select" className="sdpi-item">
-      <div className="sdpi-item-label">Input</div>
-      <select className="sdpi-item-value select" value={current} onChange={(event) => onChange({ ...params, input: event.target.value })}>
-        <option value="">{inputs.length === 0 ? "Waiting for inputs" : "Select input"}</option>
-        {current !== "" && !known && <option value={current}>{current}</option>}
-        {inputs.map((input) => (
-          <option key={`${input.number}-${input.key}`} value={String(input.number)}>
-            {inputLabel(input)}
-          </option>
-        ))}
-      </select>
-    </div>
+    <>
+      <div type="select" className="sdpi-item">
+        <div className="sdpi-item-label">Input</div>
+        <select className="sdpi-item-value select" value={current} onChange={(event) => onChange({ ...params, input: event.target.value })}>
+          <option value="">{inputs.length === 0 ? "Waiting for inputs" : "Select input"}</option>
+          {current !== "" && !known && <option value={current}>{current}</option>}
+          {inputs.map((input) => (
+            <option key={`${input.number}-${input.key}`} value={inputToken(input, useNumber)}>
+              {inputLabel(input)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <CheckRow
+        label="Number"
+        checked={useNumber}
+        text="Use number instead"
+        onChange={(checked) => {
+          const match = inputs.find((input) => input.key === current || String(input.number) === current);
+          onChange({
+            ...params,
+            useInputNumber: checked,
+            input: match ? inputToken(match, checked) : current
+          });
+        }}
+      />
+    </>
   );
+}
+
+function inputToken(input: LiveInput, useNumber: boolean) {
+  if (useNumber || !input.key) return String(input.number);
+  return input.key;
 }
 
 function MixField({ value, mixes, onChange }: { value: number; mixes: number[]; onChange: (mix: number) => void }) {

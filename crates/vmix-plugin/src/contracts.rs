@@ -176,6 +176,9 @@ pub struct AdvancedSettings {
 pub struct ActionParams {
     #[serde(default)]
     pub input: String,
+    /// When set, `input` is the vMix input number. Otherwise it is the input GUID.
+    #[serde(default)]
+    pub use_input_number: bool,
     /// `0` is Main. `2`..=`16` are Mix 2 through Mix 16.
     #[serde(default)]
     pub mix: u8,
@@ -249,6 +252,7 @@ impl Default for ActionParams {
     fn default() -> Self {
         Self {
             input: String::new(),
+            use_input_number: false,
             mix: 0,
             effect: default_cut(),
             duration_ms: String::new(),
