@@ -113,7 +113,7 @@ pub fn segment_for(
 pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> String {
     match kind {
         ActionKind::Volume => level_to_percent(volume_level(state, params)).to_string(),
-        ActionKind::Shortcut => params.function_name.clone(),
+        ActionKind::Shortcut => shortcut_name(params),
         ActionKind::Program | ActionKind::Preview | ActionKind::Play | ActionKind::Mute => {
             params.input.clone()
         }
@@ -154,11 +154,8 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
         ActionKind::List => list_function(params),
         ActionKind::Title => title_function(params),
         ActionKind::Shortcut => {
-            let name = params.function_name.trim();
-            if name.is_empty() {
-                return None;
-            }
-            name.to_string()
+            let (name, query) = shortcut_parts(params)?;
+            return Some(Command::Function { name, query });
         }
         ActionKind::Raw => {
             return if params.raw.trim().is_empty() {
@@ -422,7 +419,7 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
             }
             parts.join("&")
         }
-        ActionKind::Shortcut => shortcut_query(params),
+        ActionKind::Shortcut => shortcut_parts(params).and_then(|(_, query)| query).unwrap_or_default(),
         ActionKind::Replay => {
             if params.replay_action == "channel" || params.channel.trim().is_empty() {
                 String::new()
@@ -437,6 +434,117 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
     } else {
         Some(query)
     }
+}
+
+fn shortcut_name(params: &ActionParams) -> String {
+    shortcut_parts(params)
+        .map(|(name, _)| name)
+        .unwrap_or_default()
+}
+
+/// A shortcut is one query string, the same shape as the vMix web API:
+/// `Function=SetText&Input=1&Value=hello world`.
+/// Older settings that stored the name and fields separately still send.
+fn shortcut_parts(params: &ActionParams) -> Option<(String, Option<String>)> {
+    let line = params.function_name.trim();
+    if shortcut_line_is_complete(line) {
+        let (name, query) = split_shortcut_line(line)?;
+        if name.is_empty() {
+            return None;
+        }
+        return Some((name, if query.is_empty() { None } else { Some(query) }));
+    }
+    if line.is_empty() {
+        return None;
+    }
+    let query = shortcut_query(params);
+    Some((line.to_string(), if query.is_empty() { None } else { Some(query) }))
+}
+
+fn shortcut_line_is_complete(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("function=")
+        || lower.starts_with("function ")
+        || line.contains('&')
+        || line.contains('?')
+}
+
+fn split_shortcut_line(line: &str) -> Option<(String, String)> {
+    let body = query_body(line.trim());
+    let body = strip_function_word(body);
+    let (head, tail) = split_shortcut_head(body);
+    let mut name = String::new();
+    let mut pairs = Vec::new();
+    take_shortcut_piece(&mut name, &mut pairs, head);
+    for piece in tail.split('&') {
+        take_shortcut_piece(&mut name, &mut pairs, piece);
+    }
+    if name.is_empty() {
+        return None;
+    }
+    let query = pairs
+        .into_iter()
+        .filter(|(key, _)| !key.is_empty())
+        .map(|(key, value)| format!("{key}={}", encode_shortcut_value(&value)))
+        .collect::<Vec<_>>()
+        .join("&");
+    Some((name, query))
+}
+
+fn query_body(line: &str) -> &str {
+    if line.contains("://") {
+        return line.split_once('?').map(|(_, query)| query).unwrap_or("");
+    }
+    line.trim_start_matches('?')
+}
+
+fn strip_function_word(body: &str) -> &str {
+    let rest = body.trim();
+    let prefix = "function ";
+    if rest.len() >= prefix.len() && rest[..prefix.len()].eq_ignore_ascii_case(prefix) {
+        rest[prefix.len()..].trim()
+    } else {
+        rest
+    }
+}
+
+fn split_shortcut_head(body: &str) -> (&str, &str) {
+    if let Some((head, tail)) = body.split_once('&') {
+        return (head, tail);
+    }
+    if let Some((head, tail)) = body.split_once('?') {
+        return (head, tail);
+    }
+    if let Some((head, tail)) = body.split_once(char::is_whitespace) {
+        if !head.contains('=') {
+            return (head.trim(), tail.trim());
+        }
+    }
+    (body.trim(), "")
+}
+
+fn take_shortcut_piece(name: &mut String, pairs: &mut Vec<(String, String)>, piece: &str) {
+    let piece = piece.trim();
+    if piece.is_empty() {
+        return;
+    }
+    match piece.split_once('=') {
+        Some((key, value)) if key.eq_ignore_ascii_case("Function") => {
+            if name.is_empty() {
+                *name = value.trim().to_string();
+            }
+        }
+        Some((key, value)) => pairs.push((key.trim().to_string(), value.trim().to_string())),
+        None if name.is_empty() => *name = piece.to_string(),
+        None => {}
+    }
+}
+
+fn encode_shortcut_value(value: &str) -> String {
+    let decoded = urlencoding::decode(value).unwrap_or(std::borrow::Cow::Borrowed(value));
+    encode(decoded.as_ref()).into_owned()
 }
 
 fn shortcut_query(params: &ActionParams) -> String {
@@ -587,6 +695,17 @@ mod tests {
         };
         assert_eq!(name, "SetText");
         assert_eq!(query.as_deref(), Some("Input=1&Value=hello%20world"));
+        let pasted = ActionParams {
+            function_name: "http://127.0.0.1:8088/api/?Function=SetText&Input=1&Value=hello%20world&Mix=1".into(),
+            input: "9".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &pasted).unwrap() else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetText");
+        assert_eq!(query.as_deref(), Some("Input=1&Value=hello%20world&Mix=1"));
+        assert_eq!(shortcut_name(&pasted), "SetText");
     }
 
     #[test]

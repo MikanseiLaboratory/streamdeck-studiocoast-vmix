@@ -347,14 +347,12 @@ function Params({
           name: instance.name,
           params: settings.params?.[instance.id] ?? settings.shared ?? emptyParams()
         }));
-  const inputOptions = useMemo(
-    () => inputsFor(catalogs, shared ? targeted.map((instance) => instance.id) : [activeId]),
+  const catalogIds = useMemo(
+    () => catalogIdsFor(catalogs, shared ? targeted.map((instance) => instance.id) : [activeId]),
     [catalogs, shared, targeted, activeId]
   );
-  const mixOptions = useMemo(
-    () => mixesFor(catalogs, shared ? targeted.map((instance) => instance.id) : [activeId]),
-    [catalogs, shared, targeted, activeId]
-  );
+  const inputOptions = useMemo(() => inputsFor(catalogs, catalogIds), [catalogs, catalogIds]);
+  const mixOptions = useMemo(() => mixesFor(catalogs, catalogIds), [catalogs, catalogIds]);
 
   const write = (id: string, params: ActionParams) => {
     setSettings((previous) => {
@@ -405,7 +403,7 @@ function ActionFields({
   mixes: number[];
   onChange: (params: ActionParams) => void;
 }) {
-  if (kind === "shortcut") return <ShortcutFields params={params} inputs={inputs} mixes={mixes} onChange={onChange} />;
+  if (kind === "shortcut") return <ShortcutFields params={params} onChange={onChange} />;
   if (kind === "raw") {
     return <TextArea label="Command" value={params.raw} onChange={(raw) => onChange({ ...params, raw })} />;
   }
@@ -534,24 +532,15 @@ function TitleFields({ params, onChange }: { params: ActionParams; onChange: (pa
   );
 }
 
-function ShortcutFields({
-  params,
-  inputs,
-  mixes,
-  onChange
-}: {
-  params: ActionParams;
-  inputs: LiveInput[];
-  mixes: number[];
-  onChange: (params: ActionParams) => void;
-}) {
-  const [draft, setDraft] = useState(params.functionName);
+function ShortcutFields({ params, onChange }: { params: ActionParams; onChange: (params: ActionParams) => void }) {
+  const shown = shortcutText(params);
+  const [draft, setDraft] = useState(shown);
   const draftRef = useRef(draft);
   const paramsRef = useRef(params);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   draftRef.current = draft;
   paramsRef.current = params;
-  useEffect(() => setDraft(params.functionName), [params.functionName]);
+  useEffect(() => setDraft(shown), [shown]);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
@@ -559,30 +548,26 @@ function ShortcutFields({
     []
   );
 
-  const commit = (name: string) => {
+  const commit = (line: string) => {
     if (timer.current) {
       clearTimeout(timer.current);
       timer.current = null;
     }
     const current = paramsRef.current;
-    const known = SHORTCUTS.find((item) => item.Name === name);
-    const allowed = new Set(known?.Parameters ?? []);
-    const knownName = Boolean(known);
-    const standard = ["Input", "Value", "Channel", "Mix", "Duration"];
     onChange({
       ...current,
-      functionName: name,
-      input: !knownName || allowed.has("Input") ? current.input : "",
-      value: !knownName || allowed.has("Value") ? current.value : "",
-      channel: !knownName || allowed.has("Channel") ? current.channel : "",
-      mix: !knownName || allowed.has("Mix") ? current.mix : 0,
-      durationMs: !knownName || allowed.has("Duration") ? current.durationMs : "",
-      extra: !knownName || [...allowed].some((item) => !standard.includes(item)) ? current.extra : ""
+      functionName: line.trim(),
+      input: "",
+      value: "",
+      channel: "",
+      mix: 0,
+      durationMs: "",
+      extra: ""
     });
   };
 
+  const term = shortcutFunctionName(draft).toLowerCase();
   const matches = useMemo(() => {
-    const term = draft.trim().toLowerCase();
     if (!term) return [];
     const found: ShortcutEntry[] = [];
     for (const item of SHORTCUTS) {
@@ -592,34 +577,33 @@ function ShortcutFields({
       }
     }
     return found;
-  }, [draft]);
-  const selected = SHORTCUTS.find((item) => item.Name === params.functionName);
-  const needed = new Set(selected?.Parameters ?? []);
-  const others = (selected?.Parameters ?? []).filter((item) => !["Input", "Value", "Channel", "Mix", "Duration"].includes(item));
-  const showAll = !selected;
+  }, [term]);
+  const selected = SHORTCUTS.find((item) => item.Name.toLowerCase() === term);
 
   return (
     <>
       <div className="sdpi-item">
-        <div className="sdpi-item-label">Function</div>
+        <div className="sdpi-item-label">Shortcut</div>
         <input
           className="sdpi-item-value"
           type="text"
           list="shortcut-names"
+          spellCheck={false}
+          placeholder="Function=SetText&Input=1&Value=hello"
           value={draft}
           onChange={(event) => {
-            const name = event.target.value;
-            setDraft(name);
+            const line = event.target.value;
+            setDraft(line);
             if (timer.current) clearTimeout(timer.current);
-            timer.current = setTimeout(() => commit(name), FUNCTION_NAME_COMMIT_MS);
+            timer.current = setTimeout(() => commit(line), FUNCTION_NAME_COMMIT_MS);
           }}
           onBlur={() => {
-            if (draftRef.current !== params.functionName) commit(draftRef.current);
+            if (draftRef.current.trim() !== shortcutText(paramsRef.current)) commit(draftRef.current);
           }}
         />
         <datalist id="shortcut-names">
           {matches.map((item) => (
-            <option key={item.Name} value={item.Name}>
+            <option key={item.Name} value={`Function=${item.Name}`}>
               {item.Description}
             </option>
           ))}
@@ -631,16 +615,46 @@ function ShortcutFields({
           {selected.Parameters && selected.Parameters.length > 0 ? ` · ${selected.Parameters.join(", ")}` : ""}
         </p>
       )}
-      {(showAll || needed.has("Input")) && <InputField params={params} inputs={inputs} onChange={onChange} />}
-      {(showAll || needed.has("Value")) && <TextField label="Value" value={params.value} onChange={(value) => onChange({ ...params, value })} />}
-      {(showAll || needed.has("Channel")) && <TextField label="Channel" value={params.channel} onChange={(channel) => onChange({ ...params, channel })} />}
-      {(showAll || needed.has("Mix")) && <MixField value={params.mix} mixes={mixes} onChange={(mix) => onChange({ ...params, mix })} />}
-      {(showAll || needed.has("Duration")) && <TextField label="Duration" value={params.durationMs} onChange={(durationMs) => onChange({ ...params, durationMs })} />}
-      {(showAll || others.length > 0) && (
-        <TextField label={others.length > 0 ? others.join(", ") : "Extra"} value={params.extra} onChange={(extra) => onChange({ ...params, extra })} />
-      )}
     </>
   );
+}
+
+function shortcutText(params: ActionParams) {
+  const name = params.functionName.trim();
+  if (shortcutLineIsComplete(name)) return name;
+  const parts: string[] = [];
+  if (name) parts.push(`Function=${name}`);
+  if (params.input.trim()) parts.push(`Input=${params.input.trim()}`);
+  if (params.value) parts.push(`Value=${params.value}`);
+  if (params.channel.trim()) parts.push(`Channel=${params.channel.trim()}`);
+  if (params.mix > 0) parts.push(`Mix=${params.mix}`);
+  if (params.durationMs.trim()) parts.push(`Duration=${params.durationMs.trim()}`);
+  const extra = params.extra.trim().replace(/^&/, "");
+  if (extra) parts.push(extra);
+  return parts.join("&");
+}
+
+function shortcutLineIsComplete(value: string) {
+  const lower = value.toLowerCase();
+  return (
+    lower.startsWith("http://") ||
+    lower.startsWith("https://") ||
+    lower.startsWith("function=") ||
+    lower.startsWith("function ") ||
+    value.includes("&") ||
+    value.includes("?")
+  );
+}
+
+function shortcutFunctionName(line: string) {
+  const text = line.trim();
+  const fromQuery = text.match(/(?:^|[?&])Function=([^&]+)/i);
+  if (fromQuery?.[1]) return decodeURIComponent(fromQuery[1]);
+  const tcp = text.match(/^FUNCTION\s+(\S+)/i);
+  if (tcp?.[1]) return tcp[1];
+  const head = text.split(/[&?\s]/)[0] ?? "";
+  if (head && !head.includes("=")) return head;
+  return "";
 }
 
 function InputField({
@@ -780,6 +794,15 @@ function selectorFromMode(mode: string, selected: string[]): TargetSelector {
   if (mode.startsWith("group:")) return { kind: "group", id: mode.slice("group:".length) };
   if (mode.startsWith("instance:")) return { kind: "instances", ids: [mode.slice("instance:".length)] };
   return { kind: "all" };
+}
+
+function catalogIdsFor(catalogs: LiveCatalog[], ids: string[]) {
+  const wanted = ids.filter((id) => id);
+  const matched = catalogs.filter((item) => wanted.includes(item.id) && item.inputs.length > 0);
+  if (matched.length > 0) return matched.map((item) => item.id);
+  const available = catalogs.filter((item) => item.inputs.length > 0);
+  if (available.length > 0) return available.map((item) => item.id);
+  return wanted;
 }
 
 function inputsFor(catalogs: LiveCatalog[], ids: string[]) {

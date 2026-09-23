@@ -42,7 +42,7 @@ macro_rules! vmix_key {
                 Ok(())
             }
 
-            async fn on_key_up(
+            async fn on_key_down(
                 &mut self,
                 _payload: &ActionPayload,
                 ctx: &ActionContext<'_, Self::Settings, Self::State>,

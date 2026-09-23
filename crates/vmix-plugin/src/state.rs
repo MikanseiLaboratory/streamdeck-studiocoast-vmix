@@ -597,6 +597,11 @@ impl AppState {
             mixes.sort_unstable();
             items.push(json!({"id": config.id, "inputs": inputs, "mixes": mixes}));
         }
+        let input_count: usize = items
+            .iter()
+            .map(|item| item.get("inputs").and_then(Value::as_array).map(Vec::len).unwrap_or(0))
+            .sum();
+        tracing::info!(contexts = contexts.len(), inputs = input_count, "push vmix inputs");
         for context in contexts {
             self.send_inspector(&context, &json!({"type": "inputs", "items": items}))
                 .await;
