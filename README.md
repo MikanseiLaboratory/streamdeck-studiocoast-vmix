@@ -1,8 +1,14 @@
-# vMix [MikanseiLaboratory]
+# vMix Plugin for StreamDeck
 
-Control vMix from Stream Deck over the TCP API (port 8099).
+Stream Deck plugin for any number of named vMix instances.
 
 Download the latest plugin from the [releases page](https://github.com/MikanseiLaboratory/streamdeck-studiocoast-vmix/releases/latest).
+
+## Requirements
+
+- Stream Deck 6.4+
+- vMix with the TCP API enabled (Settings → Web Controller, port 8099)
+- Windows 10 or macOS 10.15+
 
 ## Use
 
@@ -26,3 +32,7 @@ cd pi && npm install && npm run build
 ```
 
 `INSTALL=1 ./publish.sh` installs the local build.
+
+## License
+
+[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE).
