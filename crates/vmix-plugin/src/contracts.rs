@@ -82,8 +82,12 @@ impl From<TargetGroup> for PoolGroup {
 pub enum TargetSelector {
     #[default]
     All,
-    Group { id: String },
-    Instances { ids: Vec<String> },
+    Group {
+        id: String,
+    },
+    Instances {
+        ids: Vec<String>,
+    },
 }
 
 impl From<&TargetSelector> for PoolSelector {

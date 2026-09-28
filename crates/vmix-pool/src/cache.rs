@@ -76,21 +76,51 @@ impl VmixState {
 pub fn apply_acts(state: &mut VmixState, data: ActivatorsData) -> String {
     match data {
         ActivatorsData::Input(input, on) => flag_slot(&mut state.program, 0, input, on, "Input"),
-        ActivatorsData::InputMix2(input, on) => flag_slot(&mut state.program, 2, input, on, "InputMix2"),
-        ActivatorsData::InputMix3(input, on) => flag_slot(&mut state.program, 3, input, on, "InputMix3"),
-        ActivatorsData::InputMix4(input, on) => flag_slot(&mut state.program, 4, input, on, "InputMix4"),
-        ActivatorsData::InputMix5(input, on) => flag_slot(&mut state.program, 5, input, on, "InputMix5"),
-        ActivatorsData::InputMix6(input, on) => flag_slot(&mut state.program, 6, input, on, "InputMix6"),
-        ActivatorsData::InputMix7(input, on) => flag_slot(&mut state.program, 7, input, on, "InputMix7"),
-        ActivatorsData::InputMix8(input, on) => flag_slot(&mut state.program, 8, input, on, "InputMix8"),
-        ActivatorsData::InputMix9(input, on) => flag_slot(&mut state.program, 9, input, on, "InputMix9"),
-        ActivatorsData::InputMix10(input, on) => flag_slot(&mut state.program, 10, input, on, "InputMix10"),
-        ActivatorsData::InputMix11(input, on) => flag_slot(&mut state.program, 11, input, on, "InputMix11"),
-        ActivatorsData::InputMix12(input, on) => flag_slot(&mut state.program, 12, input, on, "InputMix12"),
-        ActivatorsData::InputMix13(input, on) => flag_slot(&mut state.program, 13, input, on, "InputMix13"),
-        ActivatorsData::InputMix14(input, on) => flag_slot(&mut state.program, 14, input, on, "InputMix14"),
-        ActivatorsData::InputMix15(input, on) => flag_slot(&mut state.program, 15, input, on, "InputMix15"),
-        ActivatorsData::InputMix16(input, on) => flag_slot(&mut state.program, 16, input, on, "InputMix16"),
+        ActivatorsData::InputMix2(input, on) => {
+            flag_slot(&mut state.program, 2, input, on, "InputMix2")
+        }
+        ActivatorsData::InputMix3(input, on) => {
+            flag_slot(&mut state.program, 3, input, on, "InputMix3")
+        }
+        ActivatorsData::InputMix4(input, on) => {
+            flag_slot(&mut state.program, 4, input, on, "InputMix4")
+        }
+        ActivatorsData::InputMix5(input, on) => {
+            flag_slot(&mut state.program, 5, input, on, "InputMix5")
+        }
+        ActivatorsData::InputMix6(input, on) => {
+            flag_slot(&mut state.program, 6, input, on, "InputMix6")
+        }
+        ActivatorsData::InputMix7(input, on) => {
+            flag_slot(&mut state.program, 7, input, on, "InputMix7")
+        }
+        ActivatorsData::InputMix8(input, on) => {
+            flag_slot(&mut state.program, 8, input, on, "InputMix8")
+        }
+        ActivatorsData::InputMix9(input, on) => {
+            flag_slot(&mut state.program, 9, input, on, "InputMix9")
+        }
+        ActivatorsData::InputMix10(input, on) => {
+            flag_slot(&mut state.program, 10, input, on, "InputMix10")
+        }
+        ActivatorsData::InputMix11(input, on) => {
+            flag_slot(&mut state.program, 11, input, on, "InputMix11")
+        }
+        ActivatorsData::InputMix12(input, on) => {
+            flag_slot(&mut state.program, 12, input, on, "InputMix12")
+        }
+        ActivatorsData::InputMix13(input, on) => {
+            flag_slot(&mut state.program, 13, input, on, "InputMix13")
+        }
+        ActivatorsData::InputMix14(input, on) => {
+            flag_slot(&mut state.program, 14, input, on, "InputMix14")
+        }
+        ActivatorsData::InputMix15(input, on) => {
+            flag_slot(&mut state.program, 15, input, on, "InputMix15")
+        }
+        ActivatorsData::InputMix16(input, on) => {
+            flag_slot(&mut state.program, 16, input, on, "InputMix16")
+        }
         ActivatorsData::InputPreview(input, on) => {
             flag_slot(&mut state.preview, 0, input, on, "InputPreview")
         }
@@ -139,14 +169,30 @@ pub fn apply_acts(state: &mut VmixState, data: ActivatorsData) -> String {
         ActivatorsData::InputPreviewMix16(input, on) => {
             flag_slot(&mut state.preview, 16, input, on, "InputPreviewMix16")
         }
-        ActivatorsData::Overlay1(input, on) => flag_slot(&mut state.overlays, 1, input, on, "Overlay1"),
-        ActivatorsData::Overlay2(input, on) => flag_slot(&mut state.overlays, 2, input, on, "Overlay2"),
-        ActivatorsData::Overlay3(input, on) => flag_slot(&mut state.overlays, 3, input, on, "Overlay3"),
-        ActivatorsData::Overlay4(input, on) => flag_slot(&mut state.overlays, 4, input, on, "Overlay4"),
-        ActivatorsData::Overlay5(input, on) => flag_slot(&mut state.overlays, 5, input, on, "Overlay5"),
-        ActivatorsData::Overlay6(input, on) => flag_slot(&mut state.overlays, 6, input, on, "Overlay6"),
-        ActivatorsData::Overlay7(input, on) => flag_slot(&mut state.overlays, 7, input, on, "Overlay7"),
-        ActivatorsData::Overlay8(input, on) => flag_slot(&mut state.overlays, 8, input, on, "Overlay8"),
+        ActivatorsData::Overlay1(input, on) => {
+            flag_slot(&mut state.overlays, 1, input, on, "Overlay1")
+        }
+        ActivatorsData::Overlay2(input, on) => {
+            flag_slot(&mut state.overlays, 2, input, on, "Overlay2")
+        }
+        ActivatorsData::Overlay3(input, on) => {
+            flag_slot(&mut state.overlays, 3, input, on, "Overlay3")
+        }
+        ActivatorsData::Overlay4(input, on) => {
+            flag_slot(&mut state.overlays, 4, input, on, "Overlay4")
+        }
+        ActivatorsData::Overlay5(input, on) => {
+            flag_slot(&mut state.overlays, 5, input, on, "Overlay5")
+        }
+        ActivatorsData::Overlay6(input, on) => {
+            flag_slot(&mut state.overlays, 6, input, on, "Overlay6")
+        }
+        ActivatorsData::Overlay7(input, on) => {
+            flag_slot(&mut state.overlays, 7, input, on, "Overlay7")
+        }
+        ActivatorsData::Overlay8(input, on) => {
+            flag_slot(&mut state.overlays, 8, input, on, "Overlay8")
+        }
         ActivatorsData::InputPlaying(input, on) => {
             state.input_playing.insert(input, on);
             "InputPlaying".into()
@@ -229,17 +275,13 @@ pub fn apply_acts(state: &mut VmixState, data: ActivatorsData) -> String {
         ActivatorsData::BusGVolume(level) => bus_volume(state, 'G', level),
         ActivatorsData::InputHeadphones(_, _) => "InputHeadphones".into(),
         ActivatorsData::MasterHeadphones(_) => "MasterHeadphones".into(),
-        ActivatorsData::Unknown(parts) => parts.first().cloned().unwrap_or_else(|| "Unknown".into()),
+        ActivatorsData::Unknown(parts) => {
+            parts.first().cloned().unwrap_or_else(|| "Unknown".into())
+        }
     }
 }
 
-fn flag_slot(
-    map: &mut HashMap<u8, u16>,
-    slot: u8,
-    input: u16,
-    active: bool,
-    name: &str,
-) -> String {
+fn flag_slot(map: &mut HashMap<u8, u16>, slot: u8, input: u16, active: bool, name: &str) -> String {
     if active {
         map.insert(slot, input);
     } else if map.get(&slot) == Some(&input) {
@@ -327,7 +369,9 @@ fn merge_xml(state: &mut VmixState, vmix: &Vmix) {
             state.input_audio.insert(number, !muted);
         }
         if let Some(volume) = input.volume {
-            state.input_volume.insert(number, (volume as f32 / 100.0).clamp(0.0, 1.0));
+            state
+                .input_volume
+                .insert(number, (volume as f32 / 100.0).clamp(0.0, 1.0));
         }
         if let Some(solo) = input.solo {
             state.input_solo.insert(number, solo);
@@ -353,7 +397,11 @@ fn merge_xml(state: &mut VmixState, vmix: &Vmix) {
         let Ok(channel) = overlay.number.parse::<u8>() else {
             continue;
         };
-        match overlay.input.as_deref().and_then(|value| value.parse::<u16>().ok()) {
+        match overlay
+            .input
+            .as_deref()
+            .and_then(|value| value.parse::<u16>().ok())
+        {
             Some(input) if input > 0 => {
                 state.overlays.insert(channel, input);
             }
@@ -369,7 +417,9 @@ fn apply_bus(state: &mut VmixState, bus: char, audio: Option<&vmix_core::AudioBu
         return;
     };
     state.bus_audio.insert(bus, !audio.muted);
-    state.bus_volume.insert(bus, (audio.volume as f32 / 100.0).clamp(0.0, 1.0));
+    state
+        .bus_volume
+        .insert(bus, (audio.volume as f32 / 100.0).clamp(0.0, 1.0));
     if let Some(solo) = audio.solo {
         state.bus_solo.insert(bus, solo);
     }

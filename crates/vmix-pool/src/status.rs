@@ -6,8 +6,13 @@ use serde::{Deserialize, Serialize};
 pub enum ConnectionStatus {
     Disabled,
     Connecting,
-    Connected { vmix_version: String, edition: String },
-    Unreachable { message: String },
+    Connected {
+        vmix_version: String,
+        edition: String,
+    },
+    Unreachable {
+        message: String,
+    },
 }
 
 impl ConnectionStatus {

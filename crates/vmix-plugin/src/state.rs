@@ -670,7 +670,13 @@ impl AppState {
     }
 
     async fn open_inspectors(&self) -> Vec<String> {
-        self.runtime.inspectors.lock().await.iter().cloned().collect()
+        self.runtime
+            .inspectors
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect()
     }
 
     async fn push_status_to_open_inspectors(&self) {
