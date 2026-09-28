@@ -167,9 +167,17 @@ pub fn dial_icon(kind: ActionKind, foreground: &str) -> String {
     )
 }
 
-fn indicator(segment: Option<&Segment>, level: f32, kind: ActionKind) -> serde_json::Value {
+fn indicator(segment: Option<&Segment>, level: Option<f32>, kind: ActionKind) -> serde_json::Value {
     let connected = segment.is_some_and(|item| item.state != SegmentState::Unavailable);
     let color = segment.map(fill_for).unwrap_or_else(|| "#4c8dff".into());
+    let Some(level) = level else {
+        return serde_json::json!({
+            "value": 0,
+            "enabled": false,
+            "bar_fill_c": color,
+            "range": { "min": 0, "max": 100 },
+        });
+    };
     let value = if kind == ActionKind::ReplayJog {
         if level > 0.5 {
             100
@@ -187,12 +195,15 @@ fn indicator(segment: Option<&Segment>, level: f32, kind: ActionKind) -> serde_j
     })
 }
 
-fn value_label(kind: ActionKind, level: f32, caption: Option<&str>) -> String {
+fn value_label(kind: ActionKind, level: Option<f32>, caption: Option<&str>) -> String {
     if let Some(caption) = caption.filter(|value| !value.is_empty()) {
         return caption.to_string();
     }
+    let Some(level) = level else {
+        return String::new();
+    };
     match kind {
-        ActionKind::Volume | ActionKind::Headphones | ActionKind::Mixer => {
+        ActionKind::Volume | ActionKind::Headphones => {
             format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as u8)
         }
         ActionKind::ReplayJog => {
@@ -231,7 +242,7 @@ fn dial_title(kind: ActionKind, segment: Option<&Segment>) -> String {
 pub fn dial_feedback(
     kind: ActionKind,
     segments: &[Segment],
-    levels: &[f32],
+    levels: &[Option<f32>],
     captions: &[String],
     foreground: &str,
 ) -> (String, serde_json::Value) {
@@ -239,7 +250,7 @@ pub fn dial_feedback(
     match segments.len() {
         0 | 1 => {
             let segment = segments.first();
-            let level = levels.first().copied().unwrap_or(0.0);
+            let level = levels.first().copied().flatten();
             (
                 LAYOUT_B1.to_string(),
                 serde_json::json!({
@@ -255,12 +266,12 @@ pub fn dial_feedback(
                 "{} · {}",
                 value_label(
                     kind,
-                    levels.first().copied().unwrap_or(0.0),
+                    levels.first().copied().flatten(),
                     captions.first().map(String::as_str)
                 ),
                 value_label(
                     kind,
-                    levels.get(1).copied().unwrap_or(0.0),
+                    levels.get(1).copied().flatten(),
                     captions.get(1).map(String::as_str)
                 ),
             );
@@ -270,15 +281,15 @@ pub fn dial_feedback(
                     "title": title,
                     "icon1": icon,
                     "icon2": icon,
-                    "indicator1": indicator(segments.first(), levels.first().copied().unwrap_or(0.0), kind),
-                    "indicator2": indicator(segments.get(1), levels.get(1).copied().unwrap_or(0.0), kind),
+                    "indicator1": indicator(segments.first(), levels.first().copied().flatten(), kind),
+                    "indicator2": indicator(segments.get(1), levels.get(1).copied().flatten(), kind),
                 }),
             )
         }
         _ => {
             let labels: Vec<String> = segments
                 .iter()
-                .zip(levels.iter().copied().chain(std::iter::repeat(0.0)))
+                .zip(levels.iter().copied().chain(std::iter::repeat(None)))
                 .take(4)
                 .enumerate()
                 .map(|(index, (segment, level))| {
@@ -292,11 +303,9 @@ pub fn dial_feedback(
             let mut payload = serde_json::json!({ "title": labels.join(" · ") });
             for index in 0..4 {
                 payload[format!("indicator{}", index + 1)] = match segments.get(index) {
-                    Some(segment) => indicator(
-                        Some(segment),
-                        levels.get(index).copied().unwrap_or(0.0),
-                        kind,
-                    ),
+                    Some(segment) => {
+                        indicator(Some(segment), levels.get(index).copied().flatten(), kind)
+                    }
                     None => serde_json::json!({ "value": 0, "enabled": false }),
                 };
             }
@@ -331,7 +340,7 @@ mod tests {
                 color: "#4c8dff".into(),
                 state: SegmentState::Active,
             }],
-            &[0.53],
+            &[Some(0.53)],
             &[],
             "#f4f7fb",
         );
@@ -365,7 +374,7 @@ mod tests {
                     state: SegmentState::Inactive,
                 },
             ],
-            &[1.0, 0.0],
+            &[Some(1.0), Some(0.0)],
             &[],
             "#f4f7fb",
         );

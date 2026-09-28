@@ -506,10 +506,6 @@ impl AppState {
             let cached = self.pool.state(id).unwrap_or_default();
             if let Some(command) = ops::rotate_command(snapshot.kind, params, &cached, ticks) {
                 let _ = self.pool.send(id, command);
-                self.pool.update_state(id, |state| {
-                    ops::apply_dial_preview(snapshot.kind, params, state, ticks)
-                });
-                self.refresh_instance(context, id).await;
             }
         }
     }
@@ -608,9 +604,9 @@ impl AppState {
             .collect();
         let foreground = self.runtime.global.lock().await.fg_color.clone();
         if key.kind.is_dial() {
-            let levels: Vec<f32> = targets
+            let levels: Vec<Option<f32>> = targets
                 .iter()
-                .map(|id| key.levels.get(id).copied().unwrap_or(0.0))
+                .map(|id| key.levels.get(id).copied())
                 .collect();
             let captions: Vec<String> = targets
                 .iter()

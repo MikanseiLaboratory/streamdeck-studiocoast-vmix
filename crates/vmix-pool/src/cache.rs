@@ -52,11 +52,9 @@ pub struct VmixState {
     pub input_rate: HashMap<u16, f32>,
     pub input_position: HashMap<u16, u64>,
     pub input_duration: HashMap<u16, u64>,
-    pub replay_speed: f32,
-    pub replay_speed_a: f32,
-    pub replay_speed_b: f32,
-    /// Input mixer sends. Keys are `bus:A` or `ch:3`. Values are amplitude 0–1.
-    pub mixer_volume: HashMap<(u16, String), f32>,
+    pub replay_speed: Option<f32>,
+    pub replay_speed_a: Option<f32>,
+    pub replay_speed_b: Option<f32>,
     pub inputs: Vec<CachedInput>,
     pub mixes_present: HashSet<u8>,
 }
@@ -372,13 +370,13 @@ fn parse_unknown_float(value: &str) -> f32 {
 
 fn apply_replay_speeds(state: &mut VmixState, replay: &vmix_core::Replay) {
     if let Ok(speed) = replay.speed.parse::<f32>() {
-        state.replay_speed = speed;
+        state.replay_speed = Some(speed);
     }
     if let Ok(speed) = replay.speed_a.parse::<f32>() {
-        state.replay_speed_a = speed;
+        state.replay_speed_a = Some(speed);
     }
     if let Ok(speed) = replay.speed_b.parse::<f32>() {
-        state.replay_speed_b = speed;
+        state.replay_speed_b = Some(speed);
     }
 }
 
@@ -400,13 +398,13 @@ fn apply_xml_extras(state: &mut VmixState, xml: &str) {
         let end = tag.find('>').unwrap_or(tag.len());
         let tag = &tag[..end];
         if let Some(speed) = xml_attr(tag, "speed").and_then(|value| value.parse::<f32>().ok()) {
-            state.replay_speed = speed;
+            state.replay_speed = Some(speed);
         }
         if let Some(speed) = xml_attr(tag, "speedA").and_then(|value| value.parse::<f32>().ok()) {
-            state.replay_speed_a = speed;
+            state.replay_speed_a = Some(speed);
         }
         if let Some(speed) = xml_attr(tag, "speedB").and_then(|value| value.parse::<f32>().ok()) {
-            state.replay_speed_b = speed;
+            state.replay_speed_b = Some(speed);
         }
     }
 }
@@ -582,8 +580,8 @@ mod tests {
         assert_eq!(state.input_position.get(&1), Some(&15000));
         assert_eq!(state.input_duration.get(&1), Some(&60000));
         assert!((state.input_rate.get(&1).copied().unwrap_or(0.0) - 0.5).abs() < 0.001);
-        assert!((state.replay_speed - 0.25).abs() < 0.001);
-        assert!((state.replay_speed_a - 0.5).abs() < 0.001);
+        assert!((state.replay_speed.unwrap_or(0.0) - 0.25).abs() < 0.001);
+        assert!((state.replay_speed_a.unwrap_or(0.0) - 0.5).abs() < 0.001);
         assert!((state.master_headphones - 0.25).abs() < 0.001);
     }
 

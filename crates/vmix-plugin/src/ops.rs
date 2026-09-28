@@ -141,10 +141,15 @@ pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> 
     match kind {
         ActionKind::Volume => format!("{}%", level_to_percent(volume_level(state, params))),
         ActionKind::Headphones => format!("{}%", level_to_percent(headphones_level(state, params))),
-        ActionKind::Mixer => format!("{}%", level_to_percent(mixer_level(state, params))),
-        ActionKind::Gain => format!("{:.1} dB", gain_level(state, params)),
-        ActionKind::Rate => format!("{:.2}x", rate_level(state, params)),
-        ActionKind::ReplaySpeed => format!("{:.2}x", replay_speed_level(state, params)),
+        ActionKind::Gain => gain_level(state, params)
+            .map(|gain| format!("{gain:.1} dB"))
+            .unwrap_or_default(),
+        ActionKind::Rate => rate_level(state, params)
+            .map(|rate| format!("{rate:.2}x"))
+            .unwrap_or_default(),
+        ActionKind::ReplaySpeed => replay_speed_level(state, params)
+            .map(|speed| format!("{speed:.2}x"))
+            .unwrap_or_default(),
         ActionKind::Position => format_timestamp(position_level(state, params).0),
         ActionKind::ReplayJog => {
             if state.replay_playing {
@@ -284,10 +289,13 @@ pub fn dial_level(kind: ActionKind, params: &ActionParams, state: &VmixState) ->
     match kind {
         ActionKind::Volume => Some(amplitude_to_fader(volume_level(state, params))),
         ActionKind::Headphones => Some(amplitude_to_fader(headphones_level(state, params))),
-        ActionKind::Mixer => Some(amplitude_to_fader(mixer_level(state, params))),
-        ActionKind::Gain => Some((gain_level(state, params) / 24.0).clamp(0.0, 1.0)),
-        ActionKind::Rate => Some((rate_level(state, params) / rate_max(params)).clamp(0.0, 1.0)),
-        ActionKind::ReplaySpeed => Some((replay_speed_level(state, params) / 4.0).clamp(0.0, 1.0)),
+        ActionKind::Gain => gain_level(state, params).map(|gain| (gain / 24.0).clamp(0.0, 1.0)),
+        ActionKind::Rate => {
+            rate_level(state, params).map(|rate| (rate / rate_max(params)).clamp(0.0, 1.0))
+        }
+        ActionKind::ReplaySpeed => {
+            replay_speed_level(state, params).map(|speed| (speed / 4.0).clamp(0.0, 1.0))
+        }
         ActionKind::Position => {
             let (position, duration) = position_level(state, params);
             if duration == 0 {
@@ -297,8 +305,13 @@ pub fn dial_level(kind: ActionKind, params: &ActionParams, state: &VmixState) ->
             }
         }
         ActionKind::ReplayJog => Some(if state.replay_playing { 1.0 } else { 0.0 }),
+        ActionKind::Mixer => None,
         _ => None,
     }
+}
+
+fn mixer_adjusted_percent(last_fader: Option<f32>, ticks: i32, step: f32) -> u8 {
+    adjusted_percent(fader_to_amplitude(last_fader.unwrap_or(0.5)), ticks, step)
 }
 
 pub fn rotate_command(
@@ -318,12 +331,12 @@ pub fn rotate_command(
         )),
         ActionKind::Mixer => Some(mixer_command(
             params,
-            adjusted_percent(mixer_level(state, params), ticks, params.step),
+            mixer_adjusted_percent(None, ticks, params.step),
         )),
         ActionKind::Gain => Some(gain_command(
             params,
             adjust_range(
-                gain_level(state, params),
+                gain_level(state, params).unwrap_or(0.0),
                 ticks,
                 dial_step(kind, params),
                 0.0,
@@ -333,7 +346,7 @@ pub fn rotate_command(
         ActionKind::Rate => Some(rate_command(
             params,
             adjust_range(
-                rate_level(state, params),
+                rate_level(state, params).unwrap_or(1.0),
                 ticks,
                 dial_step(kind, params),
                 rate_min(params),
@@ -343,7 +356,7 @@ pub fn rotate_command(
         ActionKind::ReplaySpeed => Some(replay_speed_command(
             params,
             adjust_range(
-                replay_speed_level(state, params),
+                replay_speed_level(state, params).unwrap_or(1.0),
                 ticks,
                 dial_step(kind, params),
                 0.1,
@@ -377,91 +390,6 @@ pub fn press_command(kind: ActionKind, params: &ActionParams) -> Option<Command>
         ActionKind::Headphones => Some(headphones_command(params, 100)),
         ActionKind::Mixer => Some(mixer_command(params, 100)),
         _ => None,
-    }
-}
-
-pub fn apply_dial_preview(
-    kind: ActionKind,
-    params: &ActionParams,
-    state: &mut VmixState,
-    ticks: i32,
-) {
-    match kind {
-        ActionKind::Headphones => {
-            let amplitude = fader_to_amplitude(
-                adjusted_percent(headphones_level(state, params), ticks, params.step) as f32
-                    / 100.0,
-            );
-            write_headphones(state, params, amplitude);
-        }
-        ActionKind::Mixer => {
-            let amplitude = fader_to_amplitude(
-                adjusted_percent(mixer_level(state, params), ticks, params.step) as f32 / 100.0,
-            );
-            if let Some(input) = state.resolve_input(&params.input) {
-                state
-                    .mixer_volume
-                    .insert((input, mixer_slot(params)), amplitude);
-            }
-        }
-        ActionKind::Gain => {
-            if let Some(input) = state.resolve_input(&params.input) {
-                state.input_gain.insert(
-                    input,
-                    adjust_range(
-                        gain_level(state, params),
-                        ticks,
-                        dial_step(kind, params),
-                        0.0,
-                        24.0,
-                    ),
-                );
-            }
-        }
-        ActionKind::Rate => {
-            if let Some(input) = state.resolve_input(&params.input) {
-                state.input_rate.insert(
-                    input,
-                    adjust_range(
-                        rate_level(state, params),
-                        ticks,
-                        dial_step(kind, params),
-                        rate_min(params),
-                        rate_max(params),
-                    ),
-                );
-            }
-        }
-        ActionKind::ReplaySpeed => {
-            let value = adjust_range(
-                replay_speed_level(state, params),
-                ticks,
-                dial_step(kind, params),
-                0.1,
-                4.0,
-            );
-            write_replay_speed(state, params, value);
-        }
-        ActionKind::Position => {
-            if let Some(input) = state.resolve_input(&params.input) {
-                let (position, duration) = position_level(state, params);
-                let step = dial_step(kind, params).round() as i64;
-                let next = (position as i64 + ticks as i64 * step).max(0) as u64;
-                let next = if duration > 0 {
-                    next.min(duration)
-                } else {
-                    next
-                };
-                state.input_position.insert(input, next);
-            }
-        }
-        ActionKind::Volume => {
-            let amplitude = fader_to_amplitude(
-                adjusted_percent(volume_level(state, params), ticks, params.step) as f32 / 100.0,
-            );
-            write_volume(state, params, amplitude);
-        }
-        _ => {}
     }
 }
 
@@ -557,46 +485,6 @@ fn headphones_level(state: &VmixState, params: &ActionParams) -> f32 {
     }
 }
 
-fn write_headphones(state: &mut VmixState, params: &ActionParams, amplitude: f32) {
-    if params.audio_target == "input" {
-        if let Some(input) = state.resolve_input(&params.input) {
-            state.input_headphones.insert(input, amplitude);
-            return;
-        }
-    }
-    state.master_headphones = amplitude;
-}
-
-fn write_volume(state: &mut VmixState, params: &ActionParams, amplitude: f32) {
-    match params.audio_target.as_str() {
-        "master" => state.master_volume = amplitude,
-        "bus" => {
-            state.bus_volume.insert(bus_letter(params), amplitude);
-        }
-        _ => {
-            if let Some(input) = state.resolve_input(&params.input) {
-                state.input_volume.insert(input, amplitude);
-            }
-        }
-    }
-}
-
-fn write_replay_speed(state: &mut VmixState, params: &ActionParams, value: f32) {
-    match params.channel.trim().to_ascii_lowercase().as_str() {
-        "b" => state.replay_speed_b = value,
-        "a" => state.replay_speed_a = value,
-        _ => state.replay_speed = value,
-    }
-}
-
-fn mixer_slot(params: &ActionParams) -> String {
-    if params.mixer_mode.eq_ignore_ascii_case("channel") {
-        format!("ch:{}", mixer_channel(params))
-    } else {
-        format!("bus:{}", bus_letter(params))
-    }
-}
-
 fn mixer_channel(params: &ActionParams) -> u8 {
     params
         .index
@@ -607,39 +495,23 @@ fn mixer_channel(params: &ActionParams) -> u8 {
         .unwrap_or(1)
 }
 
-fn mixer_level(state: &VmixState, params: &ActionParams) -> f32 {
-    let input = state.resolve_input(&params.input).unwrap_or(0);
-    state
-        .mixer_volume
-        .get(&(input, mixer_slot(params)))
-        .copied()
-        .unwrap_or(1.0)
-}
-
-fn gain_level(state: &VmixState, params: &ActionParams) -> f32 {
+fn gain_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
     state
         .resolve_input(&params.input)
         .and_then(|input| state.input_gain.get(&input).copied())
-        .unwrap_or(0.0)
 }
 
-fn rate_level(state: &VmixState, params: &ActionParams) -> f32 {
+fn rate_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
     state
         .resolve_input(&params.input)
         .and_then(|input| state.input_rate.get(&input).copied())
-        .unwrap_or(1.0)
 }
 
-fn replay_speed_level(state: &VmixState, params: &ActionParams) -> f32 {
-    let value = match params.channel.trim().to_ascii_lowercase().as_str() {
-        "b" if state.replay_speed_b > 0.0 => state.replay_speed_b,
-        "a" if state.replay_speed_a > 0.0 => state.replay_speed_a,
+fn replay_speed_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
+    match params.channel.trim().to_ascii_lowercase().as_str() {
+        "b" => state.replay_speed_b,
+        "a" => state.replay_speed_a.or(state.replay_speed),
         _ => state.replay_speed,
-    };
-    if value <= 0.0 {
-        1.0
-    } else {
-        value
     }
 }
 
@@ -1330,6 +1202,10 @@ mod tests {
         assert!(event_affects(ActionKind::Headphones, "MasterHeadphones"));
         assert!(event_affects(ActionKind::Position, "InputPlaying"));
         assert!(!event_affects(ActionKind::Gain, "InputVolume"));
+        assert_eq!(
+            dial_level(ActionKind::Mixer, &ActionParams::default(), &loaded()),
+            None
+        );
     }
 
     #[test]
