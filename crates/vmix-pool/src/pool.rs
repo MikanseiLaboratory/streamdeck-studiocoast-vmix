@@ -137,7 +137,11 @@ impl VmixPool {
                 // The session thread exits on recycle or a stale generation, not on stop.
                 slot.recycle.store(true, Ordering::SeqCst);
             }
-            self.inner.generations.lock().expect("generations").remove(&id);
+            self.inner
+                .generations
+                .lock()
+                .expect("generations")
+                .remove(&id);
             self.inner.senders.lock().expect("senders").remove(&id);
             self.inner.statuses.lock().expect("statuses").remove(&id);
             self.inner.states.lock().expect("states").remove(&id);
@@ -183,7 +187,12 @@ impl VmixPool {
     }
 
     pub fn status(&self, id: &str) -> Option<ConnectionStatus> {
-        self.inner.statuses.lock().expect("statuses").get(id).cloned()
+        self.inner
+            .statuses
+            .lock()
+            .expect("statuses")
+            .get(id)
+            .cloned()
     }
 
     pub fn statuses(&self) -> Vec<InstanceStatus> {
@@ -264,7 +273,10 @@ impl Inner {
     }
 
     fn set_status(&self, id: &str, status: ConnectionStatus) {
-        self.statuses.lock().expect("statuses").insert(id.to_string(), status);
+        self.statuses
+            .lock()
+            .expect("statuses")
+            .insert(id.to_string(), status);
         self.publish_status(id);
     }
 
@@ -278,16 +290,16 @@ impl Inner {
     }
 
     fn is_current(&self, id: &str, generation: u64) -> bool {
-        self.generations.lock().expect("generations").get(id).copied() == Some(generation)
+        self.generations
+            .lock()
+            .expect("generations")
+            .get(id)
+            .copied()
+            == Some(generation)
     }
 }
 
-async fn supervise(
-    inner: Arc<Inner>,
-    id: String,
-    stop: Arc<AtomicBool>,
-    recycle: Arc<AtomicBool>,
-) {
+async fn supervise(inner: Arc<Inner>, id: String, stop: Arc<AtomicBool>, recycle: Arc<AtomicBool>) {
     let mut backoff = inner.options.initial_backoff;
     while !stop.load(Ordering::SeqCst) {
         let Some(config) = inner
@@ -319,10 +331,11 @@ async fn supervise(
         inner.set_status(&id, ConnectionStatus::Connecting);
         let generation = inner.bump(&id);
         let (tx, rx) = mpsc::channel();
-        inner.senders.lock().expect("senders").insert(
-            id.clone(),
-            LiveSend { sender: tx },
-        );
+        inner
+            .senders
+            .lock()
+            .expect("senders")
+            .insert(id.clone(), LiveSend { sender: tx });
         let (done_tx, done_rx) = oneshot::channel();
         let session_inner = inner.clone();
         let session_id = id.clone();
@@ -548,7 +561,9 @@ fn handle_message(inner: &Inner, id: &str, message: RecvCommand) {
                     },
                 );
             }
-            let _ = inner.events.send(PoolEvent::Snapshot { id: id.to_string() });
+            let _ = inner
+                .events
+                .send(PoolEvent::Snapshot { id: id.to_string() });
         }
         RecvCommand::FUNCTION(response) => {
             let ok = matches!(response.status, Status::OK);
@@ -581,7 +596,9 @@ mod tests {
     async fn wait_connected(pool: &VmixPool, ids: &[&str]) {
         tokio::time::timeout(Duration::from_secs(8), async {
             loop {
-                if ids.iter().all(|id| pool.status(id).is_some_and(|status| status.is_connected()))
+                if ids
+                    .iter()
+                    .all(|id| pool.status(id).is_some_and(|status| status.is_connected()))
                 {
                     return;
                 }
@@ -636,7 +653,10 @@ mod tests {
         first.push_acts("Overlay8 4 1");
         tokio::time::timeout(Duration::from_secs(4), async {
             loop {
-                if pool.state("a").is_some_and(|state| state.overlays.get(&8) == Some(&4)) {
+                if pool
+                    .state("a")
+                    .is_some_and(|state| state.overlays.get(&8) == Some(&4))
+                {
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;

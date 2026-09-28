@@ -13,8 +13,14 @@ import shortcuts from "./generated/shortcuts.json";
 const FUNCTION_NAME_COMMIT_MS = 400;
 const MAX_SHORTCUT_SUGGESTIONS = 50;
 
-type ShortcutEntry = { Name: string; Description: string; Parameters: string[] | null };
+type ShortcutEntry = { Name: string; Description: string; Parameters: string[] | null; Category?: string };
 const SHORTCUTS = shortcuts as ShortcutEntry[];
+
+function categoryForShortcutKind(kind: string) {
+  if (!kind.startsWith("shortcut-")) return undefined;
+  const slug = kind.slice("shortcut-".length);
+  return SHORTCUTS.find((item) => (item.Category ?? "").toLowerCase() === slug)?.Category;
+}
 
 const emptyParams = (): ActionParams => ({
   input: "",
@@ -37,7 +43,9 @@ const emptyParams = (): ActionParams => ({
   functionName: "",
   extra: "",
   raw: "",
-  step: 1
+  step: 1,
+  rateMode: "rate",
+  mixerMode: "bus"
 });
 
 const actionDefaults: ActionSettings = {
@@ -54,7 +62,7 @@ const localhostInstance = (): InstanceConfig => ({
   port: 8099,
   color: "#4c8dff",
   enabled: true,
-  xmlIntervalMs: 2000
+  xmlIntervalMs: 100
 });
 
 const globalDefaults: GlobalSettings = {
@@ -120,6 +128,8 @@ export function App() {
 
   useEffect(() => {
     send({ type: "ready" });
+    const retry = window.setTimeout(() => send({ type: "ready" }), 250);
+    return () => window.clearTimeout(retry);
   }, [send]);
 
   useEffect(() => {
@@ -404,7 +414,59 @@ function ActionFields({
   mixes: number[];
   onChange: (params: ActionParams) => void;
 }) {
-  if (kind === "shortcut") return <ShortcutFields params={params} onChange={onChange} />;
+  if (kind === "shortcut" || kind.startsWith("shortcut-")) {
+    return <ShortcutFields category={categoryForShortcutKind(kind)} params={params} onChange={onChange} />;
+  }
+  if (kind === "replayjog" || kind === "replayspeed") {
+    return (
+      <>
+        <SelectField label="Channel" value={params.channel || "a"} options={["a", "b"]} onChange={(channel) => onChange({ ...params, channel })} />
+        <StepField params={params} onChange={onChange} min={kind === "replayspeed" ? 0.05 : 1} max={kind === "replayspeed" ? 1 : 100} increment={kind === "replayspeed" ? 0.05 : 1} />
+      </>
+    );
+  }
+  if (kind === "gain") {
+    return (
+      <>
+        <InputField params={params} inputs={inputs} onChange={onChange} />
+        <StepField params={params} onChange={onChange} min={0.5} max={6} increment={0.5} />
+      </>
+    );
+  }
+  if (kind === "headphones") {
+    return <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />;
+  }
+  if (kind === "mixer") {
+    return (
+      <>
+        <InputField params={params} inputs={inputs} onChange={onChange} />
+        <SelectField label="Mixer" value={params.mixerMode} options={["bus", "channel"]} onChange={(mixerMode) => onChange({ ...params, mixerMode })} />
+        {params.mixerMode === "channel" ? (
+          <NumberSelect label="Channel" value={Number(params.index) || 1} max={16} onChange={(index) => onChange({ ...params, index: String(index) })} />
+        ) : (
+          <SelectField label="Bus" value={params.bus} options={["A", "B", "C", "D", "E", "F", "G", "M"]} onChange={(bus) => onChange({ ...params, bus })} />
+        )}
+        <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />
+      </>
+    );
+  }
+  if (kind === "rate") {
+    return (
+      <>
+        <InputField params={params} inputs={inputs} onChange={onChange} />
+        <SelectField label="Mode" value={params.rateMode} options={["rate", "slow"]} onChange={(rateMode) => onChange({ ...params, rateMode })} />
+        <StepField params={params} onChange={onChange} min={0.05} max={1} increment={0.05} />
+      </>
+    );
+  }
+  if (kind === "position") {
+    return (
+      <>
+        <InputField params={params} inputs={inputs} onChange={onChange} />
+        <StepField params={params} onChange={onChange} min={100} max={10000} increment={100} />
+      </>
+    );
+  }
   if (kind === "raw") {
     return <TextArea label="Command" value={params.raw} onChange={(raw) => onChange({ ...params, raw })} />;
   }
@@ -500,20 +562,7 @@ function AudioFields({
       {(kind === "bussend" || params.audioTarget === "bus") && (
         <SelectField label="Bus" value={params.bus} options={buses} onChange={(bus) => onChange({ ...params, bus })} />
       )}
-      {kind === "volume" && (
-        <div className="sdpi-item">
-          <div className="sdpi-item-label">Step</div>
-          <input
-            className="sdpi-item-value"
-            type="number"
-            min={1}
-            max={100}
-            step={1}
-            value={params.step}
-            onChange={(event) => onChange({ ...params, step: Number(event.target.value) })}
-          />
-        </div>
-      )}
+      {kind === "volume" && <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />}
     </>
   );
 }
@@ -533,7 +582,15 @@ function TitleFields({ params, onChange }: { params: ActionParams; onChange: (pa
   );
 }
 
-function ShortcutFields({ params, onChange }: { params: ActionParams; onChange: (params: ActionParams) => void }) {
+function ShortcutFields({
+  category,
+  params,
+  onChange
+}: {
+  category?: string;
+  params: ActionParams;
+  onChange: (params: ActionParams) => void;
+}) {
   const shown = shortcutText(params);
   const [draft, setDraft] = useState(shown);
   const draftRef = useRef(draft);
@@ -569,17 +626,18 @@ function ShortcutFields({ params, onChange }: { params: ActionParams; onChange: 
 
   const term = shortcutFunctionName(draft).toLowerCase();
   const matches = useMemo(() => {
-    if (!term) return [];
+    const pool = category ? SHORTCUTS.filter((item) => item.Category === category) : SHORTCUTS;
+    if (!term) return category ? pool : [];
     const found: ShortcutEntry[] = [];
-    for (const item of SHORTCUTS) {
+    for (const item of pool) {
       if (item.Name.toLowerCase().includes(term)) {
         found.push(item);
-        if (found.length >= MAX_SHORTCUT_SUGGESTIONS) break;
+        if (!category && found.length >= MAX_SHORTCUT_SUGGESTIONS) break;
       }
     }
     return found;
-  }, [term]);
-  const selected = SHORTCUTS.find((item) => item.Name.toLowerCase() === term);
+  }, [term, category]);
+  const selected = SHORTCUTS.find((item) => item.Name.toLowerCase() === term && (!category || item.Category === category));
 
   return (
     <>
@@ -730,6 +788,35 @@ function MixField({ value, mixes, onChange }: { value: number; mixes: number[]; 
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function StepField({
+  params,
+  onChange,
+  min,
+  max,
+  increment
+}: {
+  params: ActionParams;
+  onChange: (params: ActionParams) => void;
+  min: number;
+  max: number;
+  increment: number;
+}) {
+  return (
+    <div className="sdpi-item">
+      <div className="sdpi-item-label">Step</div>
+      <input
+        className="sdpi-item-value"
+        type="number"
+        min={min}
+        max={max}
+        step={increment}
+        value={params.step}
+        onChange={(event) => onChange({ ...params, step: Number(event.target.value) })}
+      />
     </div>
   );
 }

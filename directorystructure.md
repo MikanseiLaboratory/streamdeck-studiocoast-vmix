@@ -14,4 +14,4 @@ plugin/dev.mikanseilaboratory.vmix.sdPlugin/
 publish.sh / publish.ps1
 ```
 
-ショートカット一覧は隣接する `vmix-rs` の `vmix-shortcuts` crate にあり、`cargo run -p vmix-plugin --bin typegen` が Property Inspector へコピーします。
+ショートカット一覧は `vmix-rs` の `vmix-shortcuts` crate にあり、`cargo run -p vmix-plugin --bin typegen` が Property Inspector へコピーします。

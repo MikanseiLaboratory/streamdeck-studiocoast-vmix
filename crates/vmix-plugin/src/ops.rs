@@ -1,6 +1,6 @@
 use urlencoding::encode;
 use vmix_pool::{
-    acts_preview_name, acts_program_name, tcp_mix_value, Command, VmixState,
+    acts_preview_name, acts_program_name, normalize_amplitude, tcp_mix_value, Command, VmixState,
 };
 
 use crate::contracts::ActionParams;
@@ -21,12 +21,25 @@ pub fn event_affects(kind: ActionKind, name: &str) -> bool {
         ActionKind::Mute => {
             name == "InputAudio"
                 || name == "MasterAudio"
-                || (name.starts_with("Bus") && name.ends_with("Audio") && !name.starts_with("Input"))
+                || (name.starts_with("Bus")
+                    && name.ends_with("Audio")
+                    && !name.starts_with("Input"))
         }
         ActionKind::Solo => name == "InputSolo" || name.ends_with("Solo"),
         ActionKind::BusSend => name.starts_with("InputBus") || name == "InputMasterAudio",
         ActionKind::Play => name == "InputPlaying",
-        ActionKind::Volume => name.ends_with("Volume"),
+        ActionKind::Volume => {
+            name.ends_with("Volume")
+                || name == "InputAudio"
+                || name == "MasterAudio"
+                || (name.starts_with("Bus")
+                    && name.ends_with("Audio")
+                    && !name.starts_with("Input"))
+        }
+        ActionKind::ReplayJog | ActionKind::ReplaySpeed => name == "ReplayPlaying",
+        ActionKind::Headphones => name.ends_with("Headphones"),
+        ActionKind::Position => name == "InputPlaying",
+        ActionKind::Gain | ActionKind::Mixer | ActionKind::Rate => false,
         ActionKind::MultiCorder | ActionKind::List | ActionKind::Title => false,
         ActionKind::Transition | ActionKind::Stinger | ActionKind::Shortcut | ActionKind::Raw => {
             false
@@ -47,12 +60,16 @@ pub fn segment_for(
         return SegmentState::Unavailable;
     }
     match kind {
-        ActionKind::Program => {
-            lit_input(state.program.get(&params.mix).copied(), state, &params.input)
-        }
-        ActionKind::Preview => {
-            lit_input(state.preview.get(&params.mix).copied(), state, &params.input)
-        }
+        ActionKind::Program => lit_input(
+            state.program.get(&params.mix).copied(),
+            state,
+            &params.input,
+        ),
+        ActionKind::Preview => lit_input(
+            state.preview.get(&params.mix).copied(),
+            state,
+            &params.input,
+        ),
         ActionKind::Overlay => {
             let current = state.overlays.get(&params.overlay.clamp(1, 8)).copied();
             if params.input.trim().is_empty() {
@@ -101,18 +118,46 @@ pub fn segment_for(
                 SegmentState::Inactive
             }
         }
+        ActionKind::ReplayJog | ActionKind::ReplaySpeed => flag(state.replay_playing),
+        ActionKind::Volume => match audible(state, params) {
+            Some(false) => SegmentState::Inactive,
+            Some(true) => SegmentState::Active,
+            None => SegmentState::Inactive,
+        },
         ActionKind::Transition
         | ActionKind::Stinger
         | ActionKind::Title
         | ActionKind::Shortcut
         | ActionKind::Raw
-        | ActionKind::Volume => SegmentState::Neutral,
+        | ActionKind::Gain
+        | ActionKind::Headphones
+        | ActionKind::Mixer
+        | ActionKind::Rate
+        | ActionKind::Position => SegmentState::Neutral,
     }
 }
 
 pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> String {
     match kind {
-        ActionKind::Volume => level_to_percent(volume_level(state, params)).to_string(),
+        ActionKind::Volume => format!("{}%", level_to_percent(volume_level(state, params))),
+        ActionKind::Headphones => format!("{}%", level_to_percent(headphones_level(state, params))),
+        ActionKind::Gain => gain_level(state, params)
+            .map(|gain| format!("{gain:.1} dB"))
+            .unwrap_or_default(),
+        ActionKind::Rate => rate_level(state, params)
+            .map(|rate| format!("{rate:.2}x"))
+            .unwrap_or_default(),
+        ActionKind::ReplaySpeed => replay_speed_level(state, params)
+            .map(|speed| format!("{speed:.2}x"))
+            .unwrap_or_default(),
+        ActionKind::Position => format_timestamp(position_level(state, params).0),
+        ActionKind::ReplayJog => {
+            if state.replay_playing {
+                "▶".into()
+            } else {
+                "❚❚".into()
+            }
+        }
         ActionKind::Shortcut => shortcut_name(params),
         ActionKind::Program | ActionKind::Preview | ActionKind::Play | ActionKind::Mute => state
             .resolve_input(&params.input)
@@ -165,7 +210,14 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
                 Some(Command::Raw(params.raw.clone()))
             };
         }
-        ActionKind::Volume => return None,
+        ActionKind::Volume
+        | ActionKind::ReplayJog
+        | ActionKind::Gain
+        | ActionKind::Headphones
+        | ActionKind::Mixer
+        | ActionKind::Rate
+        | ActionKind::ReplaySpeed
+        | ActionKind::Position => return None,
     };
     Some(Command::Function {
         name: function,
@@ -176,14 +228,20 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
 pub fn volume_command(params: &ActionParams, percent: u8) -> Command {
     let value = percent.to_string();
     let (name, query) = match params.audio_target.as_str() {
-        "master" => ("SetMasterVolume".to_string(), Some(format!("Value={value}"))),
+        "master" => (
+            "SetMasterVolume".to_string(),
+            Some(format!("Value={value}")),
+        ),
         "bus" => (
             format!("SetBus{}Volume", bus_letter(params)),
             Some(format!("Value={value}")),
         ),
         _ => (
             "SetVolume".to_string(),
-            Some(join_query(&[("Value", value.as_str()), ("Input", params.input.trim())])),
+            Some(join_query(&[
+                ("Value", value.as_str()),
+                ("Input", params.input.trim()),
+            ])),
         ),
     };
     Command::Function {
@@ -199,9 +257,153 @@ pub fn mute_command(params: &ActionParams) -> Command {
     }
 }
 
-/// ACTS volume is 0–1. Shortcuts and the dial use 0–100.
+pub fn jog_command(params: &ActionParams, ticks: i32) -> Command {
+    let step = if params.step <= 0.0 { 1.0 } else { params.step };
+    let frames = (ticks as f32 * step).round() as i32;
+    let value = frames.to_string();
+    Command::Function {
+        name: "ReplayJumpFrames".into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Channel", params.channel.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn jog_press_command(params: &ActionParams) -> Command {
+    Command::Function {
+        name: "ReplayPlayPause".into(),
+        query: {
+            let channel = params.channel.trim();
+            if channel.is_empty() {
+                None
+            } else {
+                Some(format!("Channel={channel}"))
+            }
+        },
+    }
+}
+
+pub fn dial_level(kind: ActionKind, params: &ActionParams, state: &VmixState) -> Option<f32> {
+    match kind {
+        ActionKind::Volume => Some(amplitude_to_fader(volume_level(state, params))),
+        ActionKind::Headphones => Some(amplitude_to_fader(headphones_level(state, params))),
+        ActionKind::Gain => gain_level(state, params).map(|gain| (gain / 24.0).clamp(0.0, 1.0)),
+        ActionKind::Rate => {
+            rate_level(state, params).map(|rate| (rate / rate_max(params)).clamp(0.0, 1.0))
+        }
+        ActionKind::ReplaySpeed => {
+            replay_speed_level(state, params).map(|speed| (speed / 4.0).clamp(0.0, 1.0))
+        }
+        ActionKind::Position => {
+            let (position, duration) = position_level(state, params);
+            if duration == 0 {
+                Some(0.0)
+            } else {
+                Some((position as f32 / duration as f32).clamp(0.0, 1.0))
+            }
+        }
+        ActionKind::ReplayJog => Some(if state.replay_playing { 1.0 } else { 0.0 }),
+        ActionKind::Mixer => None,
+        _ => None,
+    }
+}
+
+fn mixer_adjusted_percent(last_fader: Option<f32>, ticks: i32, step: f32) -> u8 {
+    adjusted_percent(fader_to_amplitude(last_fader.unwrap_or(0.5)), ticks, step)
+}
+
+pub fn rotate_command(
+    kind: ActionKind,
+    params: &ActionParams,
+    state: &VmixState,
+    ticks: i32,
+) -> Option<Command> {
+    match kind {
+        ActionKind::Volume => Some(volume_command(
+            params,
+            adjusted_percent(volume_level(state, params), ticks, params.step),
+        )),
+        ActionKind::Headphones => Some(headphones_command(
+            params,
+            adjusted_percent(headphones_level(state, params), ticks, params.step),
+        )),
+        ActionKind::Mixer => Some(mixer_command(
+            params,
+            mixer_adjusted_percent(None, ticks, params.step),
+        )),
+        ActionKind::Gain => Some(gain_command(
+            params,
+            adjust_range(
+                gain_level(state, params).unwrap_or(0.0),
+                ticks,
+                dial_step(kind, params),
+                0.0,
+                24.0,
+            ),
+        )),
+        ActionKind::Rate => Some(rate_command(
+            params,
+            adjust_range(
+                rate_level(state, params).unwrap_or(1.0),
+                ticks,
+                dial_step(kind, params),
+                rate_min(params),
+                rate_max(params),
+            ),
+        )),
+        ActionKind::ReplaySpeed => Some(replay_speed_command(
+            params,
+            adjust_range(
+                replay_speed_level(state, params).unwrap_or(1.0),
+                ticks,
+                dial_step(kind, params),
+                0.1,
+                4.0,
+            ),
+        )),
+        ActionKind::Position => {
+            let (position, duration) = position_level(state, params);
+            let step = dial_step(kind, params).round() as i64;
+            let next = (position as i64 + ticks as i64 * step).max(0) as u64;
+            let next = if duration > 0 {
+                next.min(duration)
+            } else {
+                next
+            };
+            Some(position_command(params, next))
+        }
+        ActionKind::ReplayJog => Some(jog_command(params, ticks)),
+        _ => None,
+    }
+}
+
+pub fn press_command(kind: ActionKind, params: &ActionParams) -> Option<Command> {
+    match kind {
+        ActionKind::Volume => Some(mute_command(params)),
+        ActionKind::ReplayJog | ActionKind::ReplaySpeed | ActionKind::Position => {
+            Some(jog_press_command(params))
+        }
+        ActionKind::Gain => Some(gain_command(params, 0.0)),
+        ActionKind::Rate => Some(rate_command(params, 1.0)),
+        ActionKind::Headphones => Some(headphones_command(params, 100)),
+        ActionKind::Mixer => Some(mixer_command(params, 100)),
+        _ => None,
+    }
+}
+
+/// vMix UI fader 0–1 from stored amplitude 0–1.
+/// Official: Volume = (Amplitude ^ 0.25) * 100.
+pub fn amplitude_to_fader(amplitude: f32) -> f32 {
+    normalize_amplitude(amplitude).powf(0.25)
+}
+
+/// ACTS/XML volume is amplitude. Shortcuts and the dial use the UI fader 0–100.
 pub fn level_to_percent(level: f32) -> u8 {
-    (level.clamp(0.0, 1.0) * 100.0).round().clamp(0.0, 100.0) as u8
+    (amplitude_to_fader(level) * 100.0)
+        .round()
+        .clamp(0.0, 100.0) as u8
 }
 
 pub fn adjusted_percent(level: f32, ticks: i32, step: f32) -> u8 {
@@ -222,6 +424,201 @@ pub fn volume_level(state: &VmixState, params: &ActionParams) -> f32 {
             .resolve_input(&params.input)
             .and_then(|input| state.input_volume.get(&input).copied())
             .unwrap_or(0.0),
+    }
+}
+
+pub fn fader_to_amplitude(fader: f32) -> f32 {
+    fader.clamp(0.0, 1.0).powf(4.0)
+}
+
+fn dial_step(kind: ActionKind, params: &ActionParams) -> f32 {
+    if params.step > 0.0 && (params.step - 1.0).abs() > f32::EPSILON {
+        return params.step;
+    }
+    match kind {
+        ActionKind::Rate if is_slow(params) => 0.05,
+        ActionKind::Rate | ActionKind::ReplaySpeed => 0.1,
+        ActionKind::Position => 1000.0,
+        _ => {
+            if params.step > 0.0 {
+                params.step
+            } else {
+                1.0
+            }
+        }
+    }
+}
+
+fn adjust_range(current: f32, ticks: i32, step: f32, min: f32, max: f32) -> f32 {
+    let step = if step <= 0.0 { 1.0 } else { step };
+    (current + ticks as f32 * step).clamp(min, max)
+}
+
+fn is_slow(params: &ActionParams) -> bool {
+    params.rate_mode.eq_ignore_ascii_case("slow")
+}
+
+fn rate_min(params: &ActionParams) -> f32 {
+    if is_slow(params) {
+        0.0
+    } else {
+        0.1
+    }
+}
+
+fn rate_max(params: &ActionParams) -> f32 {
+    if is_slow(params) {
+        1.0
+    } else {
+        4.0
+    }
+}
+
+fn headphones_level(state: &VmixState, params: &ActionParams) -> f32 {
+    if params.audio_target == "input" && !params.input.trim().is_empty() {
+        state
+            .resolve_input(&params.input)
+            .and_then(|input| state.input_headphones.get(&input).copied())
+            .unwrap_or(state.master_headphones)
+    } else {
+        state.master_headphones
+    }
+}
+
+fn mixer_channel(params: &ActionParams) -> u8 {
+    params
+        .index
+        .trim()
+        .parse::<u8>()
+        .ok()
+        .filter(|n| (1..=16).contains(n))
+        .unwrap_or(1)
+}
+
+fn gain_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
+    state
+        .resolve_input(&params.input)
+        .and_then(|input| state.input_gain.get(&input).copied())
+}
+
+fn rate_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
+    state
+        .resolve_input(&params.input)
+        .and_then(|input| state.input_rate.get(&input).copied())
+}
+
+fn replay_speed_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
+    match params.channel.trim().to_ascii_lowercase().as_str() {
+        "b" => state.replay_speed_b,
+        "a" => state.replay_speed_a.or(state.replay_speed),
+        _ => state.replay_speed,
+    }
+}
+
+fn position_level(state: &VmixState, params: &ActionParams) -> (u64, u64) {
+    let Some(input) = state.resolve_input(&params.input) else {
+        return (0, 0);
+    };
+    (
+        state.input_position.get(&input).copied().unwrap_or(0),
+        state.input_duration.get(&input).copied().unwrap_or(0),
+    )
+}
+
+fn format_timestamp(ms: u64) -> String {
+    let total = ms / 1000;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
+pub fn headphones_command(_params: &ActionParams, percent: u8) -> Command {
+    Command::Function {
+        name: "SetHeadphonesVolume".into(),
+        query: Some(format!("Value={percent}")),
+    }
+}
+
+pub fn mixer_command(params: &ActionParams, percent: u8) -> Command {
+    let value = percent.to_string();
+    let name = if params.mixer_mode.eq_ignore_ascii_case("channel") {
+        format!("SetVolumeChannelMixer{}", mixer_channel(params))
+    } else {
+        format!("SetVolumeBusMixer{}", bus_letter(params))
+    };
+    Command::Function {
+        name,
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Input", params.input.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn gain_command(params: &ActionParams, db: f32) -> Command {
+    let value = format_number(db);
+    Command::Function {
+        name: "SetGain".into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Input", params.input.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn rate_command(params: &ActionParams, rate: f32) -> Command {
+    let value = format_number(rate);
+    let name = if is_slow(params) {
+        "SetRateSlowMotion"
+    } else {
+        "SetRate"
+    };
+    Command::Function {
+        name: name.into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Input", params.input.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn replay_speed_command(params: &ActionParams, speed: f32) -> Command {
+    let value = format_number(speed);
+    Command::Function {
+        name: "ReplayChangeSpeed".into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Channel", params.channel.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn position_command(params: &ActionParams, ms: u64) -> Command {
+    let value = ms.to_string();
+    Command::Function {
+        name: "SetPosition".into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Input", params.input.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+fn format_number(value: f32) -> String {
+    if (value - value.round()).abs() < 0.001 {
+        format!("{}", value.round() as i32)
+    } else {
+        format!("{value:.2}")
     }
 }
 
@@ -264,7 +661,11 @@ fn audible(state: &VmixState, params: &ActionParams) -> Option<bool> {
 
 fn solo_on(state: &VmixState, params: &ActionParams) -> bool {
     if params.audio_target == "bus" {
-        return state.bus_solo.get(&bus_letter(params)).copied().unwrap_or(false);
+        return state
+            .bus_solo
+            .get(&bus_letter(params))
+            .copied()
+            .unwrap_or(false);
     }
     state
         .resolve_input(&params.input)
@@ -278,7 +679,11 @@ fn bus_send_on(state: &VmixState, params: &ActionParams) -> bool {
     };
     let bus = bus_letter(params);
     if bus == 'M' {
-        return state.input_master_audio.get(&input).copied().unwrap_or(false);
+        return state
+            .input_master_audio
+            .get(&input)
+            .copied()
+            .unwrap_or(false);
     }
     state.input_bus.get(&(input, bus)).copied().unwrap_or(false)
 }
@@ -402,7 +807,9 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
                 join_query(&[("Input", input)])
             }
         }
-        ActionKind::BusSend => join_query(&[("Value", &bus_letter(params).to_string()), ("Input", input)]),
+        ActionKind::BusSend => {
+            join_query(&[("Value", &bus_letter(params).to_string()), ("Input", input)])
+        }
         ActionKind::List => match params.list_action.as_str() {
             "select" => join_query(&[("Value", params.index.trim()), ("Input", input)]),
             _ => join_query(&[("Input", input)]),
@@ -416,11 +823,16 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
                 parts.push(format!("Input={input}"));
             }
             if !params.selected_name.trim().is_empty() {
-                parts.push(format!("SelectedName={}", encode(params.selected_name.trim())));
+                parts.push(format!(
+                    "SelectedName={}",
+                    encode(params.selected_name.trim())
+                ));
             }
             parts.join("&")
         }
-        ActionKind::Shortcut => shortcut_parts(params).and_then(|(_, query)| query).unwrap_or_default(),
+        ActionKind::Shortcut => shortcut_parts(params)
+            .and_then(|(_, query)| query)
+            .unwrap_or_default(),
         ActionKind::Replay => {
             if params.replay_action == "channel" || params.channel.trim().is_empty() {
                 String::new()
@@ -459,7 +871,10 @@ fn shortcut_parts(params: &ActionParams) -> Option<(String, Option<String>)> {
         return None;
     }
     let query = shortcut_query(params);
-    Some((line.to_string(), if query.is_empty() { None } else { Some(query) }))
+    Some((
+        line.to_string(),
+        if query.is_empty() { None } else { Some(query) },
+    ))
 }
 
 fn shortcut_line_is_complete(line: &str) -> bool {
@@ -616,7 +1031,8 @@ mod tests {
             mix: 2,
             ..ActionParams::default()
         };
-        let Command::Function { name, query } = command_for(ActionKind::Program, &params).unwrap() else {
+        let Command::Function { name, query } = command_for(ActionKind::Program, &params).unwrap()
+        else {
             panic!("function");
         };
         assert_eq!(name, "ActiveInput");
@@ -629,7 +1045,8 @@ mod tests {
             mix: 16,
             ..ActionParams::default()
         };
-        let Command::Function { query, .. } = command_for(ActionKind::Program, &mix16).unwrap() else {
+        let Command::Function { query, .. } = command_for(ActionKind::Program, &mix16).unwrap()
+        else {
             panic!("function");
         };
         assert_eq!(query.as_deref(), Some("Input=1&Mix=15"));
@@ -691,17 +1108,21 @@ mod tests {
             value: "hello world".into(),
             ..ActionParams::default()
         };
-        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &params).unwrap() else {
+        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &params).unwrap()
+        else {
             panic!("function");
         };
         assert_eq!(name, "SetText");
         assert_eq!(query.as_deref(), Some("Input=1&Value=hello%20world"));
         let pasted = ActionParams {
-            function_name: "http://127.0.0.1:8088/api/?Function=SetText&Input=1&Value=hello%20world&Mix=1".into(),
+            function_name:
+                "http://127.0.0.1:8088/api/?Function=SetText&Input=1&Value=hello%20world&Mix=1"
+                    .into(),
             input: "9".into(),
             ..ActionParams::default()
         };
-        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &pasted).unwrap() else {
+        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &pasted).unwrap()
+        else {
             panic!("function");
         };
         assert_eq!(name, "SetText");
@@ -711,10 +1132,11 @@ mod tests {
 
     #[test]
     fn volume_round_trips_between_acts_fraction_and_percent() {
-        assert_eq!(level_to_percent(0.5), 50);
+        assert_eq!(level_to_percent(0.0625), 50);
+        assert_eq!(level_to_percent(6.25), 50);
         assert_eq!(level_to_percent(0.0), 0);
         assert_eq!(level_to_percent(1.0), 100);
-        assert_eq!(adjusted_percent(0.5, 3, 1.0), 53);
+        assert_eq!(adjusted_percent(0.0625, 3, 1.0), 53);
         let params = ActionParams {
             input: "1".into(),
             audio_target: "input".into(),
@@ -739,5 +1161,106 @@ mod tests {
             segment_for(ActionKind::Program, &params, &state, true),
             SegmentState::Unavailable
         );
+    }
+
+    #[test]
+    fn jog_command_uses_step_and_optional_channel() {
+        let params = ActionParams {
+            step: 2.0,
+            channel: "A".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = jog_command(&params, -3) else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayJumpFrames");
+        assert_eq!(query.as_deref(), Some("Value=-6&Channel=A"));
+        let no_channel = ActionParams {
+            step: 1.0,
+            ..ActionParams::default()
+        };
+        let Command::Function { query, .. } = jog_command(&no_channel, 4) else {
+            panic!("function");
+        };
+        assert_eq!(query.as_deref(), Some("Value=4"));
+        let Command::Function { name, query } = jog_press_command(&params) else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayPlayPause");
+        assert_eq!(query.as_deref(), Some("Channel=A"));
+    }
+
+    #[test]
+    fn volume_and_replay_jog_watch_audio_and_playing_events() {
+        assert!(event_affects(ActionKind::Volume, "InputVolume"));
+        assert!(event_affects(ActionKind::Volume, "InputAudio"));
+        assert!(event_affects(ActionKind::Volume, "MasterAudio"));
+        assert!(event_affects(ActionKind::Volume, "BusAAudio"));
+        assert!(!event_affects(ActionKind::Volume, "InputBusAAudio"));
+        assert!(event_affects(ActionKind::ReplayJog, "ReplayPlaying"));
+        assert!(!event_affects(ActionKind::ReplayJog, "Input"));
+        assert!(event_affects(ActionKind::Headphones, "MasterHeadphones"));
+        assert!(event_affects(ActionKind::Position, "InputPlaying"));
+        assert!(!event_affects(ActionKind::Gain, "InputVolume"));
+        assert_eq!(
+            dial_level(ActionKind::Mixer, &ActionParams::default(), &loaded()),
+            None
+        );
+    }
+
+    #[test]
+    fn new_dials_send_official_shortcut_ranges() {
+        let input = ActionParams {
+            input: "2".into(),
+            bus: "M".into(),
+            mixer_mode: "bus".into(),
+            index: "4".into(),
+            channel: "B".into(),
+            rate_mode: "slow".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = gain_command(&input, 6.0) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetGain");
+        assert_eq!(query.as_deref(), Some("Value=6&Input=2"));
+        let Command::Function { name, query } = headphones_command(&input, 40) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetHeadphonesVolume");
+        assert_eq!(query.as_deref(), Some("Value=40"));
+        let Command::Function { name, query } = mixer_command(&input, 80) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetVolumeBusMixerM");
+        assert_eq!(query.as_deref(), Some("Value=80&Input=2"));
+        let channel = ActionParams {
+            mixer_mode: "channel".into(),
+            index: "12".into(),
+            input: "3".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = mixer_command(&channel, 25) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetVolumeChannelMixer12");
+        assert_eq!(query.as_deref(), Some("Value=25&Input=3"));
+        let Command::Function { name, query } = rate_command(&input, 0.5) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetRateSlowMotion");
+        assert_eq!(query.as_deref(), Some("Value=0.50&Input=2"));
+        let Command::Function { name, query } = replay_speed_command(&input, 2.0) else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayChangeSpeed");
+        assert_eq!(query.as_deref(), Some("Value=2&Channel=B"));
+        let Command::Function { name, query } = position_command(&input, 15000) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetPosition");
+        assert_eq!(query.as_deref(), Some("Value=15000&Input=2"));
+        assert_eq!(format_timestamp(15000), "00:15");
+        assert_eq!(format_timestamp(3_661_000), "1:01:01");
     }
 }

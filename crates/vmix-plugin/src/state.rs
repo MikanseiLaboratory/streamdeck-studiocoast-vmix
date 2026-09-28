@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -8,7 +8,9 @@ use streamdeck_plugin::{async_trait, CommandSender, PluginLifecycle, Result, Tar
 use tokio::sync::Mutex;
 use vmix_pool::{resolve_targets, PoolEvent, PoolOptions, VmixInstanceConfig, VmixPool};
 
-use crate::contracts::{localhost_instance, ActionSettings, GlobalSettings, TargetSelector, LOCALHOST_ID};
+use crate::contracts::{
+    localhost_instance, ActionSettings, GlobalSettings, TargetSelector, LOCALHOST_ID,
+};
 use crate::kind::ActionKind;
 use crate::ops;
 use crate::render::{self, Segment, SegmentState};
@@ -19,13 +21,17 @@ struct LiveKey {
     settings: ActionSettings,
     segments: HashMap<String, SegmentState>,
     titles: HashMap<String, String>,
+    levels: HashMap<String, f32>,
     title: String,
+    last_layout: Option<String>,
+    last_feedback: Option<String>,
     multi: bool,
 }
 
 struct Runtime {
     sender: Mutex<Option<CommandSender>>,
     keys: Mutex<HashMap<String, LiveKey>>,
+    inspectors: Mutex<HashSet<String>>,
     global: Mutex<GlobalSettings>,
     pending: Mutex<HashMap<String, String>>,
     /// Serializes the provisional localhost connection with the saved settings.
@@ -53,6 +59,7 @@ impl AppState {
             runtime: Arc::new(Runtime {
                 sender: Mutex::new(None),
                 keys: Mutex::new(HashMap::new()),
+                inspectors: Mutex::new(HashSet::new()),
                 global: Mutex::new(GlobalSettings::default()),
                 pending: Mutex::new(HashMap::new()),
                 connect: Mutex::new(()),
@@ -96,7 +103,9 @@ impl AppState {
                 let _ = sender.get_global_settings(None);
             }
             if !state.runtime.settings_applied.load(Ordering::SeqCst) {
-                tracing::warn!("vMix global settings were not received; staying on Localhost 127.0.0.1:8099");
+                tracing::warn!(
+                    "vMix global settings were not received; staying on Localhost 127.0.0.1:8099"
+                );
             }
         });
     }
@@ -118,9 +127,9 @@ impl AppState {
         let current = self.pool.configs();
         let same = current.len() == ids.len()
             && ids.iter().all(|id| {
-                current
-                    .iter()
-                    .any(|config| config.id == *id && is_loopback_host(&config.host) && config.port == 8099)
+                current.iter().any(|config| {
+                    config.id == *id && is_loopback_host(&config.host) && config.port == 8099
+                })
             });
         if same {
             return;
@@ -135,7 +144,9 @@ impl AppState {
 
     pub async fn apply_global_value(&self, value: &Value) {
         if value.is_null() {
-            tracing::warn!("vMix global settings payload was empty; connecting to Localhost without saving");
+            tracing::warn!(
+                "vMix global settings payload was empty; connecting to Localhost without saving"
+            );
             self.bootstrap_localhost().await;
             return;
         }
@@ -183,7 +194,9 @@ impl AppState {
             }
         }
         if settings.instances.is_empty() {
-            tracing::warn!("saved vMix list is empty; connecting to Localhost without changing saved settings");
+            tracing::warn!(
+                "saved vMix list is empty; connecting to Localhost without changing saved settings"
+            );
             let instance: VmixInstanceConfig = localhost_instance().into();
             let groups = settings.groups.iter().cloned().map(Into::into).collect();
             self.pool.reconcile(vec![instance], groups).await;
@@ -210,7 +223,9 @@ impl AppState {
     ) {
         let mut keys = self.runtime.keys.lock().await;
         let previous = keys.remove(context);
-        let segments = previous.map(|key| key.segments).unwrap_or_default();
+        let (segments, levels) = previous
+            .map(|key| (key.segments, key.levels))
+            .unwrap_or_default();
         keys.insert(
             context.to_string(),
             LiveKey {
@@ -219,7 +234,10 @@ impl AppState {
                 settings,
                 segments,
                 titles: HashMap::new(),
+                levels,
                 title: String::new(),
+                last_layout: None,
+                last_feedback: None,
                 multi,
             },
         );
@@ -227,10 +245,16 @@ impl AppState {
         // The property inspector matches status by the saved instance id, not "localhost".
         self.reconcile_provisional().await;
         self.refresh_key(context).await;
+        if self.runtime.inspectors.lock().await.contains(context) {
+            let context = context.to_string();
+            self.push_status(&context).await;
+            self.push_inputs_to(std::slice::from_ref(&context)).await;
+        }
     }
 
     pub async fn remove_key(&self, context: &str) {
         self.runtime.keys.lock().await.remove(context);
+        self.runtime.inspectors.lock().await.remove(context);
     }
 
     pub fn press(&self, context: &str) {
@@ -250,6 +274,14 @@ impl AppState {
     }
 
     pub fn dial_down(&self, context: &str) {
+        let context = context.to_string();
+        let state = self.clone();
+        tokio::spawn(async move {
+            state.run_dial_down(&context).await;
+        });
+    }
+
+    pub fn touch_tap(&self, context: &str) {
         let context = context.to_string();
         let state = self.clone();
         tokio::spawn(async move {
@@ -281,7 +313,11 @@ impl AppState {
 
     async fn targets_for(&self, settings: &ActionSettings) -> Vec<String> {
         let configs = self.pool.configs();
-        let resolved = resolve_targets(&(&settings.common.target).into(), &configs, &self.pool.groups());
+        let resolved = resolve_targets(
+            &(&settings.common.target).into(),
+            &configs,
+            &self.pool.groups(),
+        );
         if !resolved.is_empty() {
             return resolved;
         }
@@ -295,8 +331,12 @@ impl AppState {
         let targets = self.targets_for(&snapshot.settings).await;
         let mut segments = HashMap::new();
         let mut titles = HashMap::new();
+        let mut levels = HashMap::new();
         for id in &targets {
-            let connected = self.pool.status(id).is_some_and(|status| status.is_connected());
+            let connected = self
+                .pool
+                .status(id)
+                .is_some_and(|status| status.is_connected());
             let params = snapshot.settings.params_for(id);
             let state = self.pool.state(id).unwrap_or_default();
             segments.insert(
@@ -307,10 +347,14 @@ impl AppState {
             if !title.is_empty() {
                 titles.insert(id.clone(), title);
             }
+            if let Some(level) = ops::dial_level(snapshot.kind, params, &state) {
+                levels.insert(id.clone(), level);
+            }
         }
         if let Some(key) = self.runtime.keys.lock().await.get_mut(context) {
             key.segments = segments;
             key.titles = titles.clone();
+            key.levels = levels;
             key.title = join_titles(&targets, &titles);
         }
         self.paint(context).await;
@@ -332,12 +376,21 @@ impl AppState {
         let cached = self.pool.state(instance_id).unwrap_or_default();
         let segment = ops::segment_for(snapshot.kind, params, &cached, connected);
         let title = ops::title_for(snapshot.kind, params, &cached);
+        let level = ops::dial_level(snapshot.kind, params, &cached);
         if let Some(key) = self.runtime.keys.lock().await.get_mut(context) {
             key.segments.insert(instance_id.to_string(), segment);
             if title.is_empty() {
                 key.titles.remove(instance_id);
             } else {
                 key.titles.insert(instance_id.to_string(), title);
+            }
+            match level {
+                Some(level) => {
+                    key.levels.insert(instance_id.to_string(), level);
+                }
+                None => {
+                    key.levels.remove(instance_id);
+                }
             }
             key.title = join_titles(&targets, &key.titles);
         }
@@ -347,7 +400,8 @@ impl AppState {
     async fn on_pool_event(&self, event: PoolEvent) {
         match event {
             PoolEvent::Status(status) => {
-                let contexts: Vec<String> = self.runtime.keys.lock().await.keys().cloned().collect();
+                let contexts: Vec<String> =
+                    self.runtime.keys.lock().await.keys().cloned().collect();
                 for context in contexts {
                     if status.status.is_connected() {
                         self.refresh_instance(&context, &status.id).await;
@@ -362,7 +416,8 @@ impl AppState {
                         if let Some(settings) = settings {
                             let targets = self.targets_for(&settings).await;
                             if targets.iter().any(|id| id == &status.id) {
-                                if let Some(key) = self.runtime.keys.lock().await.get_mut(&context) {
+                                if let Some(key) = self.runtime.keys.lock().await.get_mut(&context)
+                                {
                                     key.segments
                                         .insert(status.id.clone(), SegmentState::Unavailable);
                                 }
@@ -388,7 +443,8 @@ impl AppState {
                 }
             }
             PoolEvent::Snapshot { id } => {
-                let contexts: Vec<String> = self.runtime.keys.lock().await.keys().cloned().collect();
+                let contexts: Vec<String> =
+                    self.runtime.keys.lock().await.keys().cloned().collect();
                 for context in contexts {
                     self.refresh_instance(&context, &id).await;
                 }
@@ -425,7 +481,11 @@ impl AppState {
                 continue;
             };
             if snapshot.kind.confirms_press() {
-                self.runtime.pending.lock().await.insert(id.clone(), context.to_string());
+                self.runtime
+                    .pending
+                    .lock()
+                    .await
+                    .insert(id.clone(), context.to_string());
             }
             if self.pool.send(id, command).is_err() {
                 failed = true;
@@ -444,8 +504,9 @@ impl AppState {
         for id in &targets {
             let params = snapshot.settings.params_for(id);
             let cached = self.pool.state(id).unwrap_or_default();
-            let percent = ops::adjusted_percent(ops::volume_level(&cached, params), ticks, params.step);
-            let _ = self.pool.send(id, ops::volume_command(params, percent));
+            if let Some(command) = ops::rotate_command(snapshot.kind, params, &cached, ticks) {
+                let _ = self.pool.send(id, command);
+            }
         }
     }
 
@@ -456,7 +517,10 @@ impl AppState {
         let targets = self.targets_for(&snapshot.settings).await;
         for id in &targets {
             let params = snapshot.settings.params_for(id);
-            let _ = self.pool.send(id, ops::mute_command(params));
+            let Some(command) = ops::press_command(snapshot.kind, params) else {
+                continue;
+            };
+            let _ = self.pool.send(id, command);
         }
     }
 
@@ -475,29 +539,39 @@ impl AppState {
             }
             Some("ready") => {
                 tracing::info!(context, "property inspector ready");
+                let context = context.to_string();
+                self.runtime.inspectors.lock().await.insert(context.clone());
                 self.bootstrap_localhost().await;
                 if !self.runtime.settings_applied.load(Ordering::SeqCst) {
                     if let Some(sender) = self.runtime.sender.lock().await.clone() {
                         let _ = sender.get_global_settings(None);
                     }
                 }
-                self.push_status(context).await;
-                self.push_inputs().await;
+                self.push_status(&context).await;
+                self.push_inputs_to(std::slice::from_ref(&context)).await;
             }
             _ => {}
         }
     }
 
     async fn key_snapshot(&self, context: &str) -> Option<LiveKey> {
-        self.runtime.keys.lock().await.get(context).map(|key| LiveKey {
-            kind: key.kind,
-            action: key.action.clone(),
-            settings: key.settings.clone(),
-            segments: key.segments.clone(),
-            titles: key.titles.clone(),
-            title: key.title.clone(),
-            multi: key.multi,
-        })
+        self.runtime
+            .keys
+            .lock()
+            .await
+            .get(context)
+            .map(|key| LiveKey {
+                kind: key.kind,
+                action: key.action.clone(),
+                settings: key.settings.clone(),
+                segments: key.segments.clone(),
+                titles: key.titles.clone(),
+                levels: key.levels.clone(),
+                title: key.title.clone(),
+                last_layout: key.last_layout.clone(),
+                last_feedback: key.last_feedback.clone(),
+                multi: key.multi,
+            })
     }
 
     async fn paint(&self, context: &str) {
@@ -514,7 +588,9 @@ impl AppState {
             .map(|id| {
                 let config = configs.iter().find(|config| config.id == *id);
                 Segment {
-                    label: config.map(|config| config.name.clone()).unwrap_or_else(|| id.clone()),
+                    label: config
+                        .map(|config| config.name.clone())
+                        .unwrap_or_else(|| id.clone()),
                     color: config
                         .map(|config| config.color.clone())
                         .unwrap_or_else(|| "#4c8dff".into()),
@@ -527,6 +603,37 @@ impl AppState {
             })
             .collect();
         let foreground = self.runtime.global.lock().await.fg_color.clone();
+        if key.kind.is_dial() {
+            let levels: Vec<Option<f32>> = targets
+                .iter()
+                .map(|id| key.levels.get(id).copied())
+                .collect();
+            let captions: Vec<String> = targets
+                .iter()
+                .map(|id| key.titles.get(id).cloned().unwrap_or_default())
+                .collect();
+            let (layout, payload) =
+                render::dial_feedback(key.kind, &visual, &levels, &captions, &foreground);
+            let encoded = payload.to_string();
+            if key.last_layout.as_deref() == Some(layout.as_str())
+                && key.last_feedback.as_deref() == Some(encoded.as_str())
+            {
+                return;
+            }
+            if key.last_layout.as_deref() != Some(layout.as_str())
+                && sender.set_feedback_layout(context, &layout).is_err()
+            {
+                return;
+            }
+            if sender.set_feedback(context, &payload).is_err() {
+                return;
+            }
+            if let Some(live) = self.runtime.keys.lock().await.get_mut(context) {
+                live.last_layout = Some(layout);
+                live.last_feedback = Some(encoded);
+            }
+            return;
+        }
         let image = render::key_image(key.kind, &visual, &foreground);
         if sender
             .set_image(context, Some(&image), Target::HardwareAndSoftware, None)
@@ -554,17 +661,32 @@ impl AppState {
         }
     }
 
+    async fn open_inspectors(&self) -> Vec<String> {
+        self.runtime
+            .inspectors
+            .lock()
+            .await
+            .iter()
+            .cloned()
+            .collect()
+    }
+
     async fn push_status_to_open_inspectors(&self) {
-        let contexts: Vec<String> = self.runtime.keys.lock().await.keys().cloned().collect();
-        for context in contexts {
+        for context in self.open_inspectors().await {
             self.push_status(&context).await;
         }
     }
 
     pub async fn inspector_opened(&self, context: &str) {
         tracing::info!(context, "property inspector opened");
-        self.push_status(context).await;
-        self.push_inputs().await;
+        let context = context.to_string();
+        self.runtime.inspectors.lock().await.insert(context.clone());
+        self.push_status(&context).await;
+        self.push_inputs_to(std::slice::from_ref(&context)).await;
+    }
+
+    pub async fn inspector_closed(&self, context: &str) {
+        self.runtime.inspectors.lock().await.remove(context);
     }
 
     async fn push_status(&self, context: &str) {
@@ -575,7 +697,14 @@ impl AppState {
     }
 
     async fn push_inputs(&self) {
-        let contexts: Vec<String> = self.runtime.keys.lock().await.keys().cloned().collect();
+        let contexts = self.open_inspectors().await;
+        self.push_inputs_to(&contexts).await;
+    }
+
+    async fn push_inputs_to(&self, contexts: &[String]) {
+        if contexts.is_empty() {
+            return;
+        }
         let mut items = Vec::new();
         for config in self.pool.configs() {
             let Some(state) = self.pool.state(&config.id) else {
@@ -599,12 +728,21 @@ impl AppState {
         }
         let input_count: usize = items
             .iter()
-            .map(|item| item.get("inputs").and_then(Value::as_array).map(Vec::len).unwrap_or(0))
+            .map(|item| {
+                item.get("inputs")
+                    .and_then(Value::as_array)
+                    .map(Vec::len)
+                    .unwrap_or(0)
+            })
             .sum();
-        tracing::info!(contexts = contexts.len(), inputs = input_count, "push vmix inputs");
+        tracing::info!(
+            contexts = contexts.len(),
+            inputs = input_count,
+            "push vmix inputs"
+        );
+        let payload = json!({"type": "inputs", "items": items});
         for context in contexts {
-            self.send_inspector(&context, &json!({"type": "inputs", "items": items}))
-                .await;
+            self.send_inspector(context, &payload).await;
         }
     }
 
@@ -612,25 +750,7 @@ impl AppState {
         let Some(sender) = self.runtime.sender.lock().await.clone() else {
             return;
         };
-        let Some(action) = self
-            .runtime
-            .keys
-            .lock()
-            .await
-            .get(context)
-            .map(|key| key.action.clone())
-        else {
-            return;
-        };
-        let command = json!({
-            "action": action,
-            "event": "sendToPropertyInspector",
-            "context": context,
-            "payload": payload
-        });
-        if let Ok(body) = serde_json::to_string(&command) {
-            let _ = sender.send_raw(body);
-        }
+        let _ = sender.send_to_property_inspector(context, payload);
     }
 }
 
@@ -679,11 +799,18 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 /// Keys saved against an instance id that is not loaded yet still drive the local vMix.
-fn loopback_fallback(selector: &TargetSelector, configs: &[VmixInstanceConfig]) -> Option<Vec<String>> {
+fn loopback_fallback(
+    selector: &TargetSelector,
+    configs: &[VmixInstanceConfig],
+) -> Option<Vec<String>> {
     let TargetSelector::Instances { ids } = selector else {
         return None;
     };
-    if ids.is_empty() || ids.iter().any(|id| configs.iter().any(|config| config.id == *id)) {
+    if ids.is_empty()
+        || ids
+            .iter()
+            .any(|id| configs.iter().any(|config| config.id == *id))
+    {
         return None;
     }
     let local: Vec<String> = configs
@@ -702,7 +829,10 @@ fn summarize_settings(value: &Value) -> String {
     match value {
         Value::Null => "null".into(),
         Value::Object(map) => {
-            let instances = map.get("instances").and_then(Value::as_array).map(|items| items.len());
+            let instances = map
+                .get("instances")
+                .and_then(Value::as_array)
+                .map(|items| items.len());
             format!("object keys={} instances={instances:?}", map.len())
         }
         other => other.to_string(),
@@ -755,7 +885,10 @@ mod tests {
         let missing = TargetSelector::Instances {
             ids: vec!["36f8850b-70af-425f-8d79-8cf6b009a301".into()],
         };
-        assert_eq!(loopback_fallback(&missing, &configs), Some(vec!["localhost".into()]));
+        assert_eq!(
+            loopback_fallback(&missing, &configs),
+            Some(vec!["localhost".into()])
+        );
         let present = TargetSelector::Instances {
             ids: vec!["localhost".into()],
         };
@@ -767,8 +900,14 @@ mod tests {
         let ids = provisional_ids([&TargetSelector::Instances {
             ids: vec!["36f8850b-70af-425f-8d79-8cf6b009a301".into()],
         }]);
-        assert_eq!(ids, vec!["36f8850b-70af-425f-8d79-8cf6b009a301".to_string()]);
-        assert_eq!(provisional_ids(std::iter::empty()), vec!["localhost".to_string()]);
+        assert_eq!(
+            ids,
+            vec!["36f8850b-70af-425f-8d79-8cf6b009a301".to_string()]
+        );
+        assert_eq!(
+            provisional_ids(std::iter::empty()),
+            vec!["localhost".to_string()]
+        );
     }
     use vmix_pool::mock::MockVmix;
 
@@ -809,8 +948,14 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(8), async {
             loop {
                 let ready = servers.iter().all(|(id, _)| {
-                    state.pool.status(id).is_some_and(|status| status.is_connected())
-                        && state.pool.state(id).is_some_and(|cached| cached.program.get(&0) == Some(&1))
+                    state
+                        .pool
+                        .status(id)
+                        .is_some_and(|status| status.is_connected())
+                        && state
+                            .pool
+                            .state(id)
+                            .is_some_and(|cached| cached.program.get(&0) == Some(&1))
                 });
                 if ready {
                     break;
@@ -842,7 +987,13 @@ mod tests {
         let state = AppState::new(PoolOptions::for_tests());
         connect(&state, &[("a", &first), ("b", &second)]).await;
         state
-            .upsert_key("program", ActionKind::Program, "test.program", program_key("1", 0), false)
+            .upsert_key(
+                "program",
+                ActionKind::Program,
+                "test.program",
+                program_key("1", 0),
+                false,
+            )
             .await;
         wait_segment(&state, "program", "a", SegmentState::Active).await;
         wait_segment(&state, "program", "b", SegmentState::Active).await;
@@ -863,7 +1014,13 @@ mod tests {
         let state = AppState::new(PoolOptions::for_tests());
         connect(&state, &[("a", &server)]).await;
         state
-            .upsert_key("mix2", ActionKind::Program, "test.program", program_key("1", 2), false)
+            .upsert_key(
+                "mix2",
+                ActionKind::Program,
+                "test.program",
+                program_key("1", 2),
+                false,
+            )
             .await;
         wait_segment(&state, "mix2", "a", SegmentState::Inactive).await;
         server.push_acts("InputMix2 1 1");
@@ -901,9 +1058,12 @@ mod tests {
         state.press("shortcut");
         tokio::time::timeout(Duration::from_secs(4), async {
             loop {
-                if server.commands().await.iter().any(|line| {
-                    line.contains("FUNCTION SetText Input=1&Value=hello%20world")
-                }) {
+                if server
+                    .commands()
+                    .await
+                    .iter()
+                    .any(|line| line.contains("FUNCTION SetText Input=1&Value=hello%20world"))
+                {
                     return;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
@@ -911,5 +1071,45 @@ mod tests {
         })
         .await
         .expect("shortcut sent");
+    }
+
+    #[tokio::test]
+    async fn category_shortcut_uuid_sends_the_same_function() {
+        let server = MockVmix::spawn().await;
+        let state = AppState::new(PoolOptions::for_tests());
+        connect(&state, &[("a", &server)]).await;
+        state
+            .upsert_key(
+                "title-shortcut",
+                ActionKind::Shortcut,
+                "dev.mikanseilaboratory.vmix.shortcut-title",
+                ActionSettings {
+                    shared: ActionParams {
+                        function_name: "SetText".into(),
+                        input: "1".into(),
+                        value: "hello world".into(),
+                        ..ActionParams::default()
+                    },
+                    ..ActionSettings::default()
+                },
+                false,
+            )
+            .await;
+        state.press("title-shortcut");
+        tokio::time::timeout(Duration::from_secs(4), async {
+            loop {
+                if server
+                    .commands()
+                    .await
+                    .iter()
+                    .any(|line| line.contains("FUNCTION SetText Input=1&Value=hello%20world"))
+                {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("category shortcut sent");
     }
 }

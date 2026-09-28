@@ -9,7 +9,7 @@ mod numbering;
 mod pool;
 mod status;
 
-pub use cache::VmixState;
+pub use cache::{normalize_amplitude, VmixState};
 pub use config::{resolve_targets, TargetGroup, TargetSelector, VmixInstanceConfig};
 pub use numbering::{
     acts_preview_name, acts_program_name, tcp_mix_value, xml_mix_index, xml_mix_path,

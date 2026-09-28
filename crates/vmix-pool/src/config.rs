@@ -36,7 +36,7 @@ fn default_true() -> bool {
 }
 
 fn default_interval() -> u64 {
-    2000
+    100
 }
 
 impl VmixInstanceConfig {
@@ -68,8 +68,12 @@ pub struct TargetGroup {
 pub enum TargetSelector {
     #[default]
     All,
-    Group { id: String },
-    Instances { ids: Vec<String> },
+    Group {
+        id: String,
+    },
+    Instances {
+        ids: Vec<String>,
+    },
 }
 
 /// Resolve a selector to existing instance ids, preserving configuration order.

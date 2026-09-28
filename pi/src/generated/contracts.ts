@@ -10,7 +10,15 @@ useInputNumber: boolean,
 /**
  * `0` is Main. `2`..=`16` are Mix 2 through Mix 16.
  */
-mix: number, effect: string, durationMs: string, overlay: number, overlayMode: string, stinger: number, replayAction: string, channel: string, audioTarget: string, bus: string, listAction: string, index: string, titleAction: string, value: string, selectedName: string, functionName: string, extra: string, raw: string, step: number, };
+mix: number, effect: string, durationMs: string, overlay: number, overlayMode: string, stinger: number, replayAction: string, channel: string, audioTarget: string, bus: string, listAction: string, index: string, titleAction: string, value: string, selectedName: string, functionName: string, extra: string, raw: string, step: number, 
+/**
+ * `rate` is SetRate (0.1–4). `slow` is SetRateSlowMotion (0–1).
+ */
+rateMode: string, 
+/**
+ * `bus` is SetVolumeBusMixer*. `channel` is SetVolumeChannelMixer*.
+ */
+mixerMode: string, };
 
 export type AdvancedSettings = { longPress: boolean, longPressMs: number, };
 

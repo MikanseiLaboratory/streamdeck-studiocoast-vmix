@@ -39,7 +39,7 @@ fn default_true() -> bool {
 }
 
 fn default_interval() -> u32 {
-    2000
+    100
 }
 
 impl From<InstanceConfig> for VmixInstanceConfig {
@@ -82,8 +82,12 @@ impl From<TargetGroup> for PoolGroup {
 pub enum TargetSelector {
     #[default]
     All,
-    Group { id: String },
-    Instances { ids: Vec<String> },
+    Group {
+        id: String,
+    },
+    Instances {
+        ids: Vec<String>,
+    },
 }
 
 impl From<&TargetSelector> for PoolSelector {
@@ -218,6 +222,12 @@ pub struct ActionParams {
     pub raw: String,
     #[serde(default = "default_step")]
     pub step: f32,
+    /// `rate` is SetRate (0.1–4). `slow` is SetRateSlowMotion (0–1).
+    #[serde(default = "default_rate_mode")]
+    pub rate_mode: String,
+    /// `bus` is SetVolumeBusMixer*. `channel` is SetVolumeChannelMixer*.
+    #[serde(default = "default_mixer_mode")]
+    pub mixer_mode: String,
 }
 
 fn default_cut() -> String {
@@ -247,6 +257,12 @@ fn default_text() -> String {
 fn default_step() -> f32 {
     1.0
 }
+fn default_rate_mode() -> String {
+    "rate".into()
+}
+fn default_mixer_mode() -> String {
+    "bus".into()
+}
 
 impl Default for ActionParams {
     fn default() -> Self {
@@ -272,6 +288,8 @@ impl Default for ActionParams {
             extra: String::new(),
             raw: String::new(),
             step: default_step(),
+            rate_mode: default_rate_mode(),
+            mixer_mode: default_mixer_mode(),
         }
     }
 }

@@ -23,7 +23,7 @@ If it stays on Connecting or Unreachable, the reason is on the instance card. Th
 
 ## Build
 
-`vmix-rs` (branch `feat/vmix-shortcuts`) must be checked out next to this repo.
+`vmix-rs` is pulled from GitHub at the revision pinned in `Cargo.toml`.
 
 ```sh
 cargo test --workspace

@@ -13,7 +13,7 @@ const emptySettings = (): GlobalSettings => ({
       port: 8099,
       color: "#4c8dff",
       enabled: true,
-      xmlIntervalMs: 2000
+      xmlIntervalMs: 100
     }
   ],
   groups: [],
@@ -129,7 +129,7 @@ export function Configuration() {
                   port: 8099,
                   color: PALETTE[instances.length % PALETTE.length],
                   enabled: true,
-                  xmlIntervalMs: 2000
+                  xmlIntervalMs: 100
                 }
               ])
             }
