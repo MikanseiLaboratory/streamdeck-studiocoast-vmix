@@ -39,7 +39,7 @@ fn default_true() -> bool {
 }
 
 fn default_interval() -> u32 {
-    2000
+    100
 }
 
 impl From<InstanceConfig> for VmixInstanceConfig {

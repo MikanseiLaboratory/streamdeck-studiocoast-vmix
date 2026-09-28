@@ -62,7 +62,7 @@ const localhostInstance = (): InstanceConfig => ({
   port: 8099,
   color: "#4c8dff",
   enabled: true,
-  xmlIntervalMs: 2000
+  xmlIntervalMs: 100
 });
 
 const globalDefaults: GlobalSettings = {
