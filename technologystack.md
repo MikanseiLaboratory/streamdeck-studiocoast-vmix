@@ -4,7 +4,7 @@
 
 - Rust 1.85 (edition 2021)
 - `streamdeck-plugin` 0.1.0 (`macros`, `typegen`)
-- `vmix-rs`（TCP、`std`）。ローカルの `../vmix-rs` を参照し、`feat/vmix-shortcuts` の `vmix-shortcuts` crate を含む
+- `vmix-rs`（TCP、`std`）。`MikanseiLaboratory/vmix-rs` の特定コミットを git 参照し、`vmix-shortcuts` crate を含む
 - `tokio` 1
 - Property Inspector: React 18、Vite 6、TypeScript 5、`@mikanseilaboratory/streamdeck-pi-client` 0.1.0
 - 設定型の共有: `ts-rs` 10.1

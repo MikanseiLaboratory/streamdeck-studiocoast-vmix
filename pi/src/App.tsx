@@ -13,8 +13,14 @@ import shortcuts from "./generated/shortcuts.json";
 const FUNCTION_NAME_COMMIT_MS = 400;
 const MAX_SHORTCUT_SUGGESTIONS = 50;
 
-type ShortcutEntry = { Name: string; Description: string; Parameters: string[] | null };
+type ShortcutEntry = { Name: string; Description: string; Parameters: string[] | null; Category?: string };
 const SHORTCUTS = shortcuts as ShortcutEntry[];
+
+function categoryForShortcutKind(kind: string) {
+  if (!kind.startsWith("shortcut-")) return undefined;
+  const slug = kind.slice("shortcut-".length);
+  return SHORTCUTS.find((item) => (item.Category ?? "").toLowerCase() === slug)?.Category;
+}
 
 const emptyParams = (): ActionParams => ({
   input: "",
@@ -404,7 +410,28 @@ function ActionFields({
   mixes: number[];
   onChange: (params: ActionParams) => void;
 }) {
-  if (kind === "shortcut") return <ShortcutFields params={params} onChange={onChange} />;
+  if (kind === "shortcut" || kind.startsWith("shortcut-")) {
+    return <ShortcutFields category={categoryForShortcutKind(kind)} params={params} onChange={onChange} />;
+  }
+  if (kind === "replayjog") {
+    return (
+      <>
+        <SelectField label="Channel" value={params.channel || "a"} options={["a", "b"]} onChange={(channel) => onChange({ ...params, channel })} />
+        <div className="sdpi-item">
+          <div className="sdpi-item-label">Step</div>
+          <input
+            className="sdpi-item-value"
+            type="number"
+            min={1}
+            max={100}
+            step={1}
+            value={params.step}
+            onChange={(event) => onChange({ ...params, step: Number(event.target.value) })}
+          />
+        </div>
+      </>
+    );
+  }
   if (kind === "raw") {
     return <TextArea label="Command" value={params.raw} onChange={(raw) => onChange({ ...params, raw })} />;
   }
@@ -533,7 +560,15 @@ function TitleFields({ params, onChange }: { params: ActionParams; onChange: (pa
   );
 }
 
-function ShortcutFields({ params, onChange }: { params: ActionParams; onChange: (params: ActionParams) => void }) {
+function ShortcutFields({
+  category,
+  params,
+  onChange
+}: {
+  category?: string;
+  params: ActionParams;
+  onChange: (params: ActionParams) => void;
+}) {
   const shown = shortcutText(params);
   const [draft, setDraft] = useState(shown);
   const draftRef = useRef(draft);
@@ -569,17 +604,18 @@ function ShortcutFields({ params, onChange }: { params: ActionParams; onChange: 
 
   const term = shortcutFunctionName(draft).toLowerCase();
   const matches = useMemo(() => {
-    if (!term) return [];
+    const pool = category ? SHORTCUTS.filter((item) => item.Category === category) : SHORTCUTS;
+    if (!term) return category ? pool : [];
     const found: ShortcutEntry[] = [];
-    for (const item of SHORTCUTS) {
+    for (const item of pool) {
       if (item.Name.toLowerCase().includes(term)) {
         found.push(item);
-        if (found.length >= MAX_SHORTCUT_SUGGESTIONS) break;
+        if (!category && found.length >= MAX_SHORTCUT_SUGGESTIONS) break;
       }
     }
     return found;
-  }, [term]);
-  const selected = SHORTCUTS.find((item) => item.Name.toLowerCase() === term);
+  }, [term, category]);
+  const selected = SHORTCUTS.find((item) => item.Name.toLowerCase() === term && (!category || item.Category === category));
 
   return (
     <>

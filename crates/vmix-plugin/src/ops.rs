@@ -1,7 +1,5 @@
 use urlencoding::encode;
-use vmix_pool::{
-    acts_preview_name, acts_program_name, tcp_mix_value, Command, VmixState,
-};
+use vmix_pool::{acts_preview_name, acts_program_name, tcp_mix_value, Command, VmixState};
 
 use crate::contracts::ActionParams;
 use crate::kind::ActionKind;
@@ -21,12 +19,22 @@ pub fn event_affects(kind: ActionKind, name: &str) -> bool {
         ActionKind::Mute => {
             name == "InputAudio"
                 || name == "MasterAudio"
-                || (name.starts_with("Bus") && name.ends_with("Audio") && !name.starts_with("Input"))
+                || (name.starts_with("Bus")
+                    && name.ends_with("Audio")
+                    && !name.starts_with("Input"))
         }
         ActionKind::Solo => name == "InputSolo" || name.ends_with("Solo"),
         ActionKind::BusSend => name.starts_with("InputBus") || name == "InputMasterAudio",
         ActionKind::Play => name == "InputPlaying",
-        ActionKind::Volume => name.ends_with("Volume"),
+        ActionKind::Volume => {
+            name.ends_with("Volume")
+                || name == "InputAudio"
+                || name == "MasterAudio"
+                || (name.starts_with("Bus")
+                    && name.ends_with("Audio")
+                    && !name.starts_with("Input"))
+        }
+        ActionKind::ReplayJog => name == "ReplayPlaying",
         ActionKind::MultiCorder | ActionKind::List | ActionKind::Title => false,
         ActionKind::Transition | ActionKind::Stinger | ActionKind::Shortcut | ActionKind::Raw => {
             false
@@ -47,12 +55,16 @@ pub fn segment_for(
         return SegmentState::Unavailable;
     }
     match kind {
-        ActionKind::Program => {
-            lit_input(state.program.get(&params.mix).copied(), state, &params.input)
-        }
-        ActionKind::Preview => {
-            lit_input(state.preview.get(&params.mix).copied(), state, &params.input)
-        }
+        ActionKind::Program => lit_input(
+            state.program.get(&params.mix).copied(),
+            state,
+            &params.input,
+        ),
+        ActionKind::Preview => lit_input(
+            state.preview.get(&params.mix).copied(),
+            state,
+            &params.input,
+        ),
         ActionKind::Overlay => {
             let current = state.overlays.get(&params.overlay.clamp(1, 8)).copied();
             if params.input.trim().is_empty() {
@@ -101,18 +113,30 @@ pub fn segment_for(
                 SegmentState::Inactive
             }
         }
+        ActionKind::ReplayJog => flag(state.replay_playing),
+        ActionKind::Volume => match audible(state, params) {
+            Some(false) => SegmentState::Inactive,
+            Some(true) => SegmentState::Active,
+            None => SegmentState::Inactive,
+        },
         ActionKind::Transition
         | ActionKind::Stinger
         | ActionKind::Title
         | ActionKind::Shortcut
-        | ActionKind::Raw
-        | ActionKind::Volume => SegmentState::Neutral,
+        | ActionKind::Raw => SegmentState::Neutral,
     }
 }
 
 pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> String {
     match kind {
         ActionKind::Volume => level_to_percent(volume_level(state, params)).to_string(),
+        ActionKind::ReplayJog => {
+            if state.replay_playing {
+                "▶".into()
+            } else {
+                "❚❚".into()
+            }
+        }
         ActionKind::Shortcut => shortcut_name(params),
         ActionKind::Program | ActionKind::Preview | ActionKind::Play | ActionKind::Mute => state
             .resolve_input(&params.input)
@@ -165,7 +189,7 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
                 Some(Command::Raw(params.raw.clone()))
             };
         }
-        ActionKind::Volume => return None,
+        ActionKind::Volume | ActionKind::ReplayJog => return None,
     };
     Some(Command::Function {
         name: function,
@@ -176,14 +200,20 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
 pub fn volume_command(params: &ActionParams, percent: u8) -> Command {
     let value = percent.to_string();
     let (name, query) = match params.audio_target.as_str() {
-        "master" => ("SetMasterVolume".to_string(), Some(format!("Value={value}"))),
+        "master" => (
+            "SetMasterVolume".to_string(),
+            Some(format!("Value={value}")),
+        ),
         "bus" => (
             format!("SetBus{}Volume", bus_letter(params)),
             Some(format!("Value={value}")),
         ),
         _ => (
             "SetVolume".to_string(),
-            Some(join_query(&[("Value", value.as_str()), ("Input", params.input.trim())])),
+            Some(join_query(&[
+                ("Value", value.as_str()),
+                ("Input", params.input.trim()),
+            ])),
         ),
     };
     Command::Function {
@@ -196,6 +226,42 @@ pub fn mute_command(params: &ActionParams) -> Command {
     Command::Function {
         name: mute_function(params),
         query: query_for(ActionKind::Mute, params),
+    }
+}
+
+pub fn jog_command(params: &ActionParams, ticks: i32) -> Command {
+    let step = if params.step <= 0.0 { 1.0 } else { params.step };
+    let frames = (ticks as f32 * step).round() as i32;
+    let value = frames.to_string();
+    Command::Function {
+        name: "ReplayJumpFrames".into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Channel", params.channel.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn jog_press_command(params: &ActionParams) -> Command {
+    Command::Function {
+        name: "ReplayPlayPause".into(),
+        query: {
+            let channel = params.channel.trim();
+            if channel.is_empty() {
+                None
+            } else {
+                Some(format!("Channel={channel}"))
+            }
+        },
+    }
+}
+
+pub fn dial_level(kind: ActionKind, params: &ActionParams, state: &VmixState) -> Option<f32> {
+    match kind {
+        ActionKind::Volume => Some(volume_level(state, params)),
+        ActionKind::ReplayJog => Some(if state.replay_playing { 1.0 } else { 0.0 }),
+        _ => None,
     }
 }
 
@@ -264,7 +330,11 @@ fn audible(state: &VmixState, params: &ActionParams) -> Option<bool> {
 
 fn solo_on(state: &VmixState, params: &ActionParams) -> bool {
     if params.audio_target == "bus" {
-        return state.bus_solo.get(&bus_letter(params)).copied().unwrap_or(false);
+        return state
+            .bus_solo
+            .get(&bus_letter(params))
+            .copied()
+            .unwrap_or(false);
     }
     state
         .resolve_input(&params.input)
@@ -278,7 +348,11 @@ fn bus_send_on(state: &VmixState, params: &ActionParams) -> bool {
     };
     let bus = bus_letter(params);
     if bus == 'M' {
-        return state.input_master_audio.get(&input).copied().unwrap_or(false);
+        return state
+            .input_master_audio
+            .get(&input)
+            .copied()
+            .unwrap_or(false);
     }
     state.input_bus.get(&(input, bus)).copied().unwrap_or(false)
 }
@@ -402,7 +476,9 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
                 join_query(&[("Input", input)])
             }
         }
-        ActionKind::BusSend => join_query(&[("Value", &bus_letter(params).to_string()), ("Input", input)]),
+        ActionKind::BusSend => {
+            join_query(&[("Value", &bus_letter(params).to_string()), ("Input", input)])
+        }
         ActionKind::List => match params.list_action.as_str() {
             "select" => join_query(&[("Value", params.index.trim()), ("Input", input)]),
             _ => join_query(&[("Input", input)]),
@@ -416,11 +492,16 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
                 parts.push(format!("Input={input}"));
             }
             if !params.selected_name.trim().is_empty() {
-                parts.push(format!("SelectedName={}", encode(params.selected_name.trim())));
+                parts.push(format!(
+                    "SelectedName={}",
+                    encode(params.selected_name.trim())
+                ));
             }
             parts.join("&")
         }
-        ActionKind::Shortcut => shortcut_parts(params).and_then(|(_, query)| query).unwrap_or_default(),
+        ActionKind::Shortcut => shortcut_parts(params)
+            .and_then(|(_, query)| query)
+            .unwrap_or_default(),
         ActionKind::Replay => {
             if params.replay_action == "channel" || params.channel.trim().is_empty() {
                 String::new()
@@ -459,7 +540,10 @@ fn shortcut_parts(params: &ActionParams) -> Option<(String, Option<String>)> {
         return None;
     }
     let query = shortcut_query(params);
-    Some((line.to_string(), if query.is_empty() { None } else { Some(query) }))
+    Some((
+        line.to_string(),
+        if query.is_empty() { None } else { Some(query) },
+    ))
 }
 
 fn shortcut_line_is_complete(line: &str) -> bool {
@@ -616,7 +700,8 @@ mod tests {
             mix: 2,
             ..ActionParams::default()
         };
-        let Command::Function { name, query } = command_for(ActionKind::Program, &params).unwrap() else {
+        let Command::Function { name, query } = command_for(ActionKind::Program, &params).unwrap()
+        else {
             panic!("function");
         };
         assert_eq!(name, "ActiveInput");
@@ -629,7 +714,8 @@ mod tests {
             mix: 16,
             ..ActionParams::default()
         };
-        let Command::Function { query, .. } = command_for(ActionKind::Program, &mix16).unwrap() else {
+        let Command::Function { query, .. } = command_for(ActionKind::Program, &mix16).unwrap()
+        else {
             panic!("function");
         };
         assert_eq!(query.as_deref(), Some("Input=1&Mix=15"));
@@ -691,17 +777,21 @@ mod tests {
             value: "hello world".into(),
             ..ActionParams::default()
         };
-        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &params).unwrap() else {
+        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &params).unwrap()
+        else {
             panic!("function");
         };
         assert_eq!(name, "SetText");
         assert_eq!(query.as_deref(), Some("Input=1&Value=hello%20world"));
         let pasted = ActionParams {
-            function_name: "http://127.0.0.1:8088/api/?Function=SetText&Input=1&Value=hello%20world&Mix=1".into(),
+            function_name:
+                "http://127.0.0.1:8088/api/?Function=SetText&Input=1&Value=hello%20world&Mix=1"
+                    .into(),
             input: "9".into(),
             ..ActionParams::default()
         };
-        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &pasted).unwrap() else {
+        let Command::Function { name, query } = command_for(ActionKind::Shortcut, &pasted).unwrap()
+        else {
             panic!("function");
         };
         assert_eq!(name, "SetText");
@@ -739,5 +829,43 @@ mod tests {
             segment_for(ActionKind::Program, &params, &state, true),
             SegmentState::Unavailable
         );
+    }
+
+    #[test]
+    fn jog_command_uses_step_and_optional_channel() {
+        let params = ActionParams {
+            step: 2.0,
+            channel: "A".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = jog_command(&params, -3) else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayJumpFrames");
+        assert_eq!(query.as_deref(), Some("Value=-6&Channel=A"));
+        let no_channel = ActionParams {
+            step: 1.0,
+            ..ActionParams::default()
+        };
+        let Command::Function { query, .. } = jog_command(&no_channel, 4) else {
+            panic!("function");
+        };
+        assert_eq!(query.as_deref(), Some("Value=4"));
+        let Command::Function { name, query } = jog_press_command(&params) else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayPlayPause");
+        assert_eq!(query.as_deref(), Some("Channel=A"));
+    }
+
+    #[test]
+    fn volume_and_replay_jog_watch_audio_and_playing_events() {
+        assert!(event_affects(ActionKind::Volume, "InputVolume"));
+        assert!(event_affects(ActionKind::Volume, "InputAudio"));
+        assert!(event_affects(ActionKind::Volume, "MasterAudio"));
+        assert!(event_affects(ActionKind::Volume, "BusAAudio"));
+        assert!(!event_affects(ActionKind::Volume, "InputBusAAudio"));
+        assert!(event_affects(ActionKind::ReplayJog, "ReplayPlaying"));
+        assert!(!event_affects(ActionKind::ReplayJog, "Input"));
     }
 }

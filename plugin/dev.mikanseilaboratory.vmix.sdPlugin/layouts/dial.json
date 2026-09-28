@@ -1,0 +1,11 @@
+{
+  "id": "dev.mikanseilaboratory.vmix.dial",
+  "items": [
+    {
+      "key": "canvas",
+      "type": "pixmap",
+      "rect": [0, 0, 200, 100],
+      "zOrder": 0
+    }
+  ]
+}

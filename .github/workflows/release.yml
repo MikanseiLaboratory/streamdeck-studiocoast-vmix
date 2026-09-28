@@ -26,11 +26,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: streamdeck-studiocoast-vmix
-      - uses: actions/checkout@v4
-        with:
-          repository: MikanseiLaboratory/vmix-rs
-          ref: feat/vmix-shortcuts
-          path: vmix-rs
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-node@v4
         with:
@@ -71,11 +66,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           path: streamdeck-studiocoast-vmix
-      - uses: actions/checkout@v4
-        with:
-          repository: MikanseiLaboratory/vmix-rs
-          ref: feat/vmix-shortcuts
-          path: vmix-rs
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

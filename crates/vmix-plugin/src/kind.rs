@@ -21,13 +21,20 @@ pub enum ActionKind {
     Shortcut,
     Raw,
     Volume,
+    ReplayJog,
 }
 
 impl ActionKind {
     pub fn has_toggle_state(self) -> bool {
         !matches!(
             self,
-            Self::Transition | Self::Stinger | Self::Title | Self::Shortcut | Self::Raw | Self::Volume
+            Self::Transition
+                | Self::Stinger
+                | Self::Title
+                | Self::Shortcut
+                | Self::Raw
+                | Self::Volume
+                | Self::ReplayJog
         )
     }
 
@@ -36,5 +43,9 @@ impl ActionKind {
             self,
             Self::Transition | Self::Stinger | Self::Title | Self::Shortcut | Self::Raw
         )
+    }
+
+    pub fn is_dial(self) -> bool {
+        matches!(self, Self::Volume | Self::ReplayJog)
     }
 }

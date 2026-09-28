@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/vmix-pool", "crates/vmix-plugin"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
@@ -16,4 +16,4 @@ tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-threa
 tracing = "0.1"
 urlencoding = "2.1.3"
 uuid = { version = "1", features = ["v4", "serde"] }
-vmix-rs = { path = "../vmix-rs/vmix-rs", default-features = false, features = ["tcp", "std"] }
+vmix-rs = { git = "https://github.com/MikanseiLaboratory/vmix-rs", rev = "3d8496a2595123bc5bb9cb5f6f54512d79c59857", default-features = false, features = ["tcp", "std"] }
