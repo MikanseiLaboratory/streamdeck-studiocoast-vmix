@@ -137,6 +137,18 @@ fn icon_path(kind: ActionKind) -> &'static str {
         ActionKind::ReplayJog => {
             r#"<path d="M16 32a16 16 0 1 0 4-10M16 14v10h10M10 52h12M42 52h12"/>"#
         }
+        ActionKind::Gain => r#"<path d="M16 48V16h8l24 32V16"/>"#,
+        ActionKind::Headphones => {
+            r#"<path d="M16 32a16 16 0 1 1 32 0M16 32v12h8V32M40 32v12h8V32"/>"#
+        }
+        ActionKind::Mixer => {
+            r#"<path d="M20 16v32M32 22v26M44 18v30M14 28h12M26 40h12M38 24h12"/>"#
+        }
+        ActionKind::Rate => r#"<path d="M16 40l16-24 16 24M24 40h16"/>"#,
+        ActionKind::ReplaySpeed => {
+            r#"<path d="M16 32a16 16 0 1 0 4-10M16 14v10h10M28 32h16l-8-8M36 32l8 8"/>"#
+        }
+        ActionKind::Position => r#"<path d="M12 32h40M20 24l-8 8 8 8M44 24l8 8-8 8"/>"#,
     }
 }
 
@@ -171,12 +183,18 @@ fn indicator(segment: Option<&Segment>, level: f32, kind: ActionKind) -> serde_j
         "value": value,
         "enabled": connected,
         "bar_fill_c": color,
+        "range": { "min": 0, "max": 100 },
     })
 }
 
-fn value_label(kind: ActionKind, level: f32) -> String {
+fn value_label(kind: ActionKind, level: f32, caption: Option<&str>) -> String {
+    if let Some(caption) = caption.filter(|value| !value.is_empty()) {
+        return caption.to_string();
+    }
     match kind {
-        ActionKind::Volume => format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as u8),
+        ActionKind::Volume | ActionKind::Headphones | ActionKind::Mixer => {
+            format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as u8)
+        }
         ActionKind::ReplayJog => {
             if level > 0.5 {
                 "Play".into()
@@ -184,6 +202,27 @@ fn value_label(kind: ActionKind, level: f32) -> String {
                 "Pause".into()
             }
         }
+        ActionKind::Gain => format!("{:.1} dB", level.clamp(0.0, 1.0) * 24.0),
+        ActionKind::Rate | ActionKind::ReplaySpeed => {
+            format!("{:.2}x", level.clamp(0.0, 1.0) * 4.0)
+        }
+        ActionKind::Position => format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as u8),
+        _ => String::new(),
+    }
+}
+
+fn dial_title(kind: ActionKind, segment: Option<&Segment>) -> String {
+    match kind {
+        ActionKind::Volume => segment
+            .map(|item| item.label.clone())
+            .unwrap_or_else(|| "Volume".into()),
+        ActionKind::ReplayJog => "Replay".into(),
+        ActionKind::Gain => "Gain".into(),
+        ActionKind::Headphones => "HP".into(),
+        ActionKind::Mixer => "Mixer".into(),
+        ActionKind::Rate => "Rate".into(),
+        ActionKind::ReplaySpeed => "Speed".into(),
+        ActionKind::Position => "Pos".into(),
         _ => String::new(),
     }
 }
@@ -193,6 +232,7 @@ pub fn dial_feedback(
     kind: ActionKind,
     segments: &[Segment],
     levels: &[f32],
+    captions: &[String],
     foreground: &str,
 ) -> (String, serde_json::Value) {
     let icon = dial_icon(kind, foreground);
@@ -200,18 +240,11 @@ pub fn dial_feedback(
         0 | 1 => {
             let segment = segments.first();
             let level = levels.first().copied().unwrap_or(0.0);
-            let title = match kind {
-                ActionKind::Volume => segment
-                    .map(|item| item.label.clone())
-                    .unwrap_or_else(|| "Volume".into()),
-                ActionKind::ReplayJog => "Replay".into(),
-                _ => String::new(),
-            };
             (
                 LAYOUT_B1.to_string(),
                 serde_json::json!({
-                    "title": title,
-                    "value": value_label(kind, level),
+                    "title": dial_title(kind, segment),
+                    "value": value_label(kind, level, captions.first().map(String::as_str)),
                     "icon": icon,
                     "indicator": indicator(segment, level, kind),
                 }),
@@ -220,8 +253,16 @@ pub fn dial_feedback(
         2 => {
             let title = format!(
                 "{} · {}",
-                value_label(kind, levels.first().copied().unwrap_or(0.0)),
-                value_label(kind, levels.get(1).copied().unwrap_or(0.0))
+                value_label(
+                    kind,
+                    levels.first().copied().unwrap_or(0.0),
+                    captions.first().map(String::as_str)
+                ),
+                value_label(
+                    kind,
+                    levels.get(1).copied().unwrap_or(0.0),
+                    captions.get(1).map(String::as_str)
+                ),
             );
             (
                 LAYOUT_C1.to_string(),
@@ -239,8 +280,13 @@ pub fn dial_feedback(
                 .iter()
                 .zip(levels.iter().copied().chain(std::iter::repeat(0.0)))
                 .take(4)
-                .map(|(segment, level)| {
-                    format!("{} {}", initial(&segment.label), value_label(kind, level))
+                .enumerate()
+                .map(|(index, (segment, level))| {
+                    format!(
+                        "{} {}",
+                        initial(&segment.label),
+                        value_label(kind, level, captions.get(index).map(String::as_str))
+                    )
                 })
                 .collect();
             let mut payload = serde_json::json!({ "title": labels.join(" · ") });
@@ -286,6 +332,7 @@ mod tests {
                 state: SegmentState::Active,
             }],
             &[0.53],
+            &[],
             "#f4f7fb",
         );
         assert_eq!(layout, LAYOUT_B1);
@@ -294,6 +341,8 @@ mod tests {
         assert_eq!(payload["indicator"]["value"], 53);
         assert_eq!(payload["indicator"]["enabled"], true);
         assert_eq!(payload["indicator"]["bar_fill_c"], "#4c8dff");
+        assert_eq!(payload["indicator"]["range"]["min"], 0);
+        assert_eq!(payload["indicator"]["range"]["max"], 100);
         assert!(payload["icon"]
             .as_str()
             .unwrap()
@@ -317,6 +366,7 @@ mod tests {
                 },
             ],
             &[1.0, 0.0],
+            &[],
             "#f4f7fb",
         );
         assert_eq!(layout, LAYOUT_C1);

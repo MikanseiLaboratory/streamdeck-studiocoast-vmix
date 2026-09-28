@@ -186,6 +186,12 @@ impl VmixPool {
         self.inner.states.lock().expect("states").get(id).cloned()
     }
 
+    pub fn update_state(&self, id: &str, update: impl FnOnce(&mut VmixState)) {
+        if let Some(state) = self.inner.states.lock().expect("states").get_mut(id) {
+            update(state);
+        }
+    }
+
     pub fn status(&self, id: &str) -> Option<ConnectionStatus> {
         self.inner
             .statuses

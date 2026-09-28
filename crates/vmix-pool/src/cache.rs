@@ -15,8 +15,10 @@ pub struct CachedInput {
 
 /// Activator and XML state for a single vMix instance.
 ///
-/// Volumes are stored as the ACTS 0–1 fraction. XML `volume` (0–100) is divided
-/// by 100 on ingest. `input_audio` is true when sound is on, matching ACTS.
+/// Volumes are stored as amplitude 0–1. XML `volume` is amplitude 0–100 and is
+/// divided on ingest. ACTS values above 1.0 are treated as that same 0–100 scale.
+/// The UI fader (`SetVolume` 0–100) is `(amplitude ^ 0.25) * 100`.
+/// `input_audio` is true when sound is on, matching ACTS.
 #[derive(Clone, Debug, Default)]
 pub struct VmixState {
     pub version: String,
@@ -44,8 +46,31 @@ pub struct VmixState {
     pub input_volume: HashMap<u16, f32>,
     pub master_volume: f32,
     pub bus_volume: HashMap<char, f32>,
+    pub input_headphones: HashMap<u16, f32>,
+    pub master_headphones: f32,
+    pub input_gain: HashMap<u16, f32>,
+    pub input_rate: HashMap<u16, f32>,
+    pub input_position: HashMap<u16, u64>,
+    pub input_duration: HashMap<u16, u64>,
+    pub replay_speed: f32,
+    pub replay_speed_a: f32,
+    pub replay_speed_b: f32,
+    /// Input mixer sends. Keys are `bus:A` or `ch:3`. Values are amplitude 0–1.
+    pub mixer_volume: HashMap<(u16, String), f32>,
     pub inputs: Vec<CachedInput>,
     pub mixes_present: HashSet<u8>,
+}
+
+/// ACTS/XML volume is amplitude. Values above 1.0 are the XML 0–100 scale.
+pub fn normalize_amplitude(level: f32) -> f32 {
+    if !level.is_finite() {
+        return 0.0;
+    }
+    if level > 1.0 {
+        (level / 100.0).clamp(0.0, 1.0)
+    } else {
+        level.clamp(0.0, 1.0)
+    }
 }
 
 impl VmixState {
@@ -259,11 +284,11 @@ pub fn apply_acts(state: &mut VmixState, data: ActivatorsData) -> String {
             "ReplayPlaying".into()
         }
         ActivatorsData::InputVolume(input, level) => {
-            state.input_volume.insert(input, level);
+            state.input_volume.insert(input, normalize_amplitude(level));
             "InputVolume".into()
         }
         ActivatorsData::MasterVolume(level) => {
-            state.master_volume = level;
+            state.master_volume = normalize_amplitude(level);
             "MasterVolume".into()
         }
         ActivatorsData::BusAVolume(level) => bus_volume(state, 'A', level),
@@ -273,11 +298,17 @@ pub fn apply_acts(state: &mut VmixState, data: ActivatorsData) -> String {
         ActivatorsData::BusEVolume(level) => bus_volume(state, 'E', level),
         ActivatorsData::BusFVolume(level) => bus_volume(state, 'F', level),
         ActivatorsData::BusGVolume(level) => bus_volume(state, 'G', level),
-        ActivatorsData::InputHeadphones(_, _) => "InputHeadphones".into(),
-        ActivatorsData::MasterHeadphones(_) => "MasterHeadphones".into(),
-        ActivatorsData::Unknown(parts) => {
-            parts.first().cloned().unwrap_or_else(|| "Unknown".into())
+        ActivatorsData::InputHeadphones(input, level) => {
+            state
+                .input_headphones
+                .insert(input, normalize_amplitude(level));
+            "InputHeadphones".into()
         }
+        ActivatorsData::MasterHeadphones(level) => {
+            state.master_headphones = normalize_amplitude(level);
+            "MasterHeadphones".into()
+        }
+        ActivatorsData::Unknown(parts) => apply_unknown(state, &parts),
     }
 }
 
@@ -306,14 +337,85 @@ fn bus_solo(state: &mut VmixState, bus: char, on: bool) -> String {
 }
 
 fn bus_volume(state: &mut VmixState, bus: char, level: f32) -> String {
-    state.bus_volume.insert(bus, level);
+    state.bus_volume.insert(bus, normalize_amplitude(level));
     format!("Bus{bus}Volume")
 }
 
 pub fn apply_xml(state: &mut VmixState, xml: &str) -> Result<(), vmix_core::quick_xml::DeError> {
     let parsed = vmix_core::from_str(xml)?;
     merge_xml(state, &parsed);
+    apply_xml_extras(state, xml);
     Ok(())
+}
+
+fn apply_unknown(state: &mut VmixState, parts: &[String]) -> String {
+    let name = parts.first().cloned().unwrap_or_else(|| "Unknown".into());
+    match name.as_str() {
+        "InputHeadphones" if parts.len() >= 3 => {
+            if let Ok(input) = parts[1].parse::<u16>() {
+                state
+                    .input_headphones
+                    .insert(input, normalize_amplitude(parse_unknown_float(&parts[2])));
+            }
+        }
+        "MasterHeadphones" if parts.len() >= 2 => {
+            state.master_headphones = normalize_amplitude(parse_unknown_float(&parts[1]));
+        }
+        _ => {}
+    }
+    name
+}
+
+fn parse_unknown_float(value: &str) -> f32 {
+    value.parse().unwrap_or(0.0)
+}
+
+fn apply_replay_speeds(state: &mut VmixState, replay: &vmix_core::Replay) {
+    if let Ok(speed) = replay.speed.parse::<f32>() {
+        state.replay_speed = speed;
+    }
+    if let Ok(speed) = replay.speed_a.parse::<f32>() {
+        state.replay_speed_a = speed;
+    }
+    if let Ok(speed) = replay.speed_b.parse::<f32>() {
+        state.replay_speed_b = speed;
+    }
+}
+
+fn apply_xml_extras(state: &mut VmixState, xml: &str) {
+    let mut rest = xml;
+    while let Some(start) = rest.find("<input ") {
+        let tag = &rest[start..];
+        let end = tag.find('>').unwrap_or(tag.len());
+        let tag = &tag[..end];
+        if let Some(number) = xml_attr(tag, "number").and_then(|value| value.parse::<u16>().ok()) {
+            if let Some(rate) = xml_attr(tag, "rate").and_then(|value| value.parse::<f32>().ok()) {
+                state.input_rate.insert(number, rate);
+            }
+        }
+        rest = &rest[start + 1..];
+    }
+    if let Some(start) = xml.rfind("<replay") {
+        let tag = &xml[start..];
+        let end = tag.find('>').unwrap_or(tag.len());
+        let tag = &tag[..end];
+        if let Some(speed) = xml_attr(tag, "speed").and_then(|value| value.parse::<f32>().ok()) {
+            state.replay_speed = speed;
+        }
+        if let Some(speed) = xml_attr(tag, "speedA").and_then(|value| value.parse::<f32>().ok()) {
+            state.replay_speed_a = speed;
+        }
+        if let Some(speed) = xml_attr(tag, "speedB").and_then(|value| value.parse::<f32>().ok()) {
+            state.replay_speed_b = speed;
+        }
+    }
+}
+
+fn xml_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    let key = format!("{name}=\"");
+    let start = tag.find(&key)? + key.len();
+    let end = tag[start..].find('"')?;
+    Some(&tag[start..start + end])
 }
 
 fn merge_xml(state: &mut VmixState, vmix: &Vmix) {
@@ -373,6 +475,20 @@ fn merge_xml(state: &mut VmixState, vmix: &Vmix) {
                 .input_volume
                 .insert(number, (volume as f32 / 100.0).clamp(0.0, 1.0));
         }
+        if let Some(gain) = input.gain_db {
+            state
+                .input_gain
+                .insert(number, (gain as f32).clamp(0.0, 24.0));
+        }
+        if let Ok(position) = input.position.parse::<u64>() {
+            state.input_position.insert(number, position);
+        }
+        if let Ok(duration) = input.duration.parse::<u64>() {
+            state.input_duration.insert(number, duration);
+        }
+        if let Some(replay) = &input.replay {
+            apply_replay_speeds(state, replay);
+        }
         if let Some(solo) = input.solo {
             state.input_solo.insert(number, solo);
         }
@@ -385,6 +501,9 @@ fn merge_xml(state: &mut VmixState, vmix: &Vmix) {
         });
     }
     state.master_volume = (vmix.audio.master.volume as f32 / 100.0).clamp(0.0, 1.0);
+    if let Some(headphones) = vmix.audio.master.headphones_volume {
+        state.master_headphones = (headphones as f32 / 100.0).clamp(0.0, 1.0);
+    }
     state.master_audio = !vmix.audio.master.muted;
     apply_bus(state, 'A', vmix.audio.bus_a.as_ref());
     apply_bus(state, 'B', vmix.audio.bus_b.as_ref());
@@ -440,5 +559,40 @@ mod tests {
         assert_eq!(state.resolve_input("Guest"), Some(2));
         assert!(!state.multi_corder);
         assert!((state.input_volume.get(&1).copied().unwrap_or(0.0) - 0.8).abs() < 0.001);
+    }
+
+    #[test]
+    fn acts_volume_above_one_is_xml_amplitude_scale() {
+        let mut state = VmixState::default();
+        apply_acts(&mut state, ActivatorsData::InputVolume(1, 6.25));
+        apply_acts(&mut state, ActivatorsData::MasterVolume(6.25));
+        apply_acts(&mut state, ActivatorsData::BusAVolume(6.25));
+        assert!((state.input_volume.get(&1).copied().unwrap_or(0.0) - 0.0625).abs() < 0.0001);
+        assert!((state.master_volume - 0.0625).abs() < 0.0001);
+        assert!((state.bus_volume.get(&'A').copied().unwrap_or(0.0) - 0.0625).abs() < 0.0001);
+        assert!((normalize_amplitude(0.0625) - 0.0625).abs() < 0.0001);
+    }
+
+    #[test]
+    fn xml_keeps_gain_position_and_replay_speed() {
+        let xml = r#"<vmix><version>29.0.0.0</version><edition>4K</edition><inputs><input key="cam-key" number="1" type="Replay" title="Cam" shortTitle="Cam" state="Running" position="15000" duration="60000" loop="False" muted="False" volume="80" gainDb="6" rate="0.5"><replay live="False" recording="False" channelMode="AB" events="0" eventsA="0" eventsB="0" cameraA="1" cameraB="1" speed="0.25" speedA="0.5" speedB="1"></replay></input></inputs><overlays><overlay number="1"></overlay></overlays><preview>1</preview><active>1</active><fadeToBlack>False</fadeToBlack><transitions><transition number="1" effect="Fade" duration="500"></transition></transitions><recording>False</recording><external>False</external><streaming>False</streaming><playList>False</playList><multiCorder>False</multiCorder><fullscreen>False</fullscreen><audio><master volume="100" muted="False" meterF1="0" meterF2="0" headphonesVolume="25"></master></audio><dynamic><input1></input1><input2></input2><input3></input3><input4></input4><value1></value1><value2></value2><value3></value3><value4></value4></dynamic></vmix>"#;
+        let mut state = VmixState::default();
+        apply_xml(&mut state, xml).unwrap();
+        assert!((state.input_gain.get(&1).copied().unwrap_or(0.0) - 6.0).abs() < 0.001);
+        assert_eq!(state.input_position.get(&1), Some(&15000));
+        assert_eq!(state.input_duration.get(&1), Some(&60000));
+        assert!((state.input_rate.get(&1).copied().unwrap_or(0.0) - 0.5).abs() < 0.001);
+        assert!((state.replay_speed - 0.25).abs() < 0.001);
+        assert!((state.replay_speed_a - 0.5).abs() < 0.001);
+        assert!((state.master_headphones - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn acts_headphones_are_stored() {
+        let mut state = VmixState::default();
+        apply_acts(&mut state, ActivatorsData::MasterHeadphones(0.0625));
+        apply_acts(&mut state, ActivatorsData::InputHeadphones(2, 0.0625));
+        assert!((state.master_headphones - 0.0625).abs() < 0.0001);
+        assert!((state.input_headphones.get(&2).copied().unwrap_or(0.0) - 0.0625).abs() < 0.0001);
     }
 }

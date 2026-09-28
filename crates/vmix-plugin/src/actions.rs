@@ -384,6 +384,42 @@ fn trigger_for(kind: ActionKind) -> TriggerDescription {
             touch: Some("Play / Pause".into()),
             long_touch: None,
         },
+        ActionKind::Gain => TriggerDescription {
+            rotate: Some("Gain".into()),
+            push: Some("Reset 0 dB".into()),
+            touch: Some("Reset 0 dB".into()),
+            long_touch: None,
+        },
+        ActionKind::Headphones => TriggerDescription {
+            rotate: Some("Headphones".into()),
+            push: Some("Full".into()),
+            touch: Some("Full".into()),
+            long_touch: None,
+        },
+        ActionKind::Mixer => TriggerDescription {
+            rotate: Some("Mixer".into()),
+            push: Some("Full".into()),
+            touch: Some("Full".into()),
+            long_touch: None,
+        },
+        ActionKind::Rate => TriggerDescription {
+            rotate: Some("Rate".into()),
+            push: Some("1.00x".into()),
+            touch: Some("1.00x".into()),
+            long_touch: None,
+        },
+        ActionKind::ReplaySpeed => TriggerDescription {
+            rotate: Some("Replay speed".into()),
+            push: Some("Play / Pause".into()),
+            touch: Some("Play / Pause".into()),
+            long_touch: None,
+        },
+        ActionKind::Position => TriggerDescription {
+            rotate: Some("Position".into()),
+            push: Some("Play / Pause".into()),
+            touch: Some("Play / Pause".into()),
+            long_touch: None,
+        },
         _ => TriggerDescription::default(),
     }
 }
@@ -397,6 +433,36 @@ vmix_dial!(
     ReplayJogDial,
     "dev.mikanseilaboratory.vmix.replayjog",
     ActionKind::ReplayJog
+);
+vmix_dial!(
+    GainDial,
+    "dev.mikanseilaboratory.vmix.gain",
+    ActionKind::Gain
+);
+vmix_dial!(
+    HeadphonesDial,
+    "dev.mikanseilaboratory.vmix.headphones",
+    ActionKind::Headphones
+);
+vmix_dial!(
+    MixerDial,
+    "dev.mikanseilaboratory.vmix.mixer",
+    ActionKind::Mixer
+);
+vmix_dial!(
+    RateDial,
+    "dev.mikanseilaboratory.vmix.rate",
+    ActionKind::Rate
+);
+vmix_dial!(
+    ReplaySpeedDial,
+    "dev.mikanseilaboratory.vmix.replayspeed",
+    ActionKind::ReplaySpeed
+);
+vmix_dial!(
+    PositionDial,
+    "dev.mikanseilaboratory.vmix.position",
+    ActionKind::Position
 );
 
 pub fn force_link() {
@@ -439,5 +505,11 @@ pub fn force_link() {
         std::any::TypeId::of::<RawAction>(),
         std::any::TypeId::of::<VolumeDial>(),
         std::any::TypeId::of::<ReplayJogDial>(),
+        std::any::TypeId::of::<GainDial>(),
+        std::any::TypeId::of::<HeadphonesDial>(),
+        std::any::TypeId::of::<MixerDial>(),
+        std::any::TypeId::of::<RateDial>(),
+        std::any::TypeId::of::<ReplaySpeedDial>(),
+        std::any::TypeId::of::<PositionDial>(),
     );
 }

@@ -1,5 +1,7 @@
 use urlencoding::encode;
-use vmix_pool::{acts_preview_name, acts_program_name, tcp_mix_value, Command, VmixState};
+use vmix_pool::{
+    acts_preview_name, acts_program_name, normalize_amplitude, tcp_mix_value, Command, VmixState,
+};
 
 use crate::contracts::ActionParams;
 use crate::kind::ActionKind;
@@ -34,7 +36,10 @@ pub fn event_affects(kind: ActionKind, name: &str) -> bool {
                     && name.ends_with("Audio")
                     && !name.starts_with("Input"))
         }
-        ActionKind::ReplayJog => name == "ReplayPlaying",
+        ActionKind::ReplayJog | ActionKind::ReplaySpeed => name == "ReplayPlaying",
+        ActionKind::Headphones => name.ends_with("Headphones"),
+        ActionKind::Position => name == "InputPlaying",
+        ActionKind::Gain | ActionKind::Mixer | ActionKind::Rate => false,
         ActionKind::MultiCorder | ActionKind::List | ActionKind::Title => false,
         ActionKind::Transition | ActionKind::Stinger | ActionKind::Shortcut | ActionKind::Raw => {
             false
@@ -113,7 +118,7 @@ pub fn segment_for(
                 SegmentState::Inactive
             }
         }
-        ActionKind::ReplayJog => flag(state.replay_playing),
+        ActionKind::ReplayJog | ActionKind::ReplaySpeed => flag(state.replay_playing),
         ActionKind::Volume => match audible(state, params) {
             Some(false) => SegmentState::Inactive,
             Some(true) => SegmentState::Active,
@@ -123,13 +128,24 @@ pub fn segment_for(
         | ActionKind::Stinger
         | ActionKind::Title
         | ActionKind::Shortcut
-        | ActionKind::Raw => SegmentState::Neutral,
+        | ActionKind::Raw
+        | ActionKind::Gain
+        | ActionKind::Headphones
+        | ActionKind::Mixer
+        | ActionKind::Rate
+        | ActionKind::Position => SegmentState::Neutral,
     }
 }
 
 pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> String {
     match kind {
-        ActionKind::Volume => level_to_percent(volume_level(state, params)).to_string(),
+        ActionKind::Volume => format!("{}%", level_to_percent(volume_level(state, params))),
+        ActionKind::Headphones => format!("{}%", level_to_percent(headphones_level(state, params))),
+        ActionKind::Mixer => format!("{}%", level_to_percent(mixer_level(state, params))),
+        ActionKind::Gain => format!("{:.1} dB", gain_level(state, params)),
+        ActionKind::Rate => format!("{:.2}x", rate_level(state, params)),
+        ActionKind::ReplaySpeed => format!("{:.2}x", replay_speed_level(state, params)),
+        ActionKind::Position => format_timestamp(position_level(state, params).0),
         ActionKind::ReplayJog => {
             if state.replay_playing {
                 "▶".into()
@@ -189,7 +205,14 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
                 Some(Command::Raw(params.raw.clone()))
             };
         }
-        ActionKind::Volume | ActionKind::ReplayJog => return None,
+        ActionKind::Volume
+        | ActionKind::ReplayJog
+        | ActionKind::Gain
+        | ActionKind::Headphones
+        | ActionKind::Mixer
+        | ActionKind::Rate
+        | ActionKind::ReplaySpeed
+        | ActionKind::Position => return None,
     };
     Some(Command::Function {
         name: function,
@@ -259,15 +282,200 @@ pub fn jog_press_command(params: &ActionParams) -> Command {
 
 pub fn dial_level(kind: ActionKind, params: &ActionParams, state: &VmixState) -> Option<f32> {
     match kind {
-        ActionKind::Volume => Some(volume_level(state, params)),
+        ActionKind::Volume => Some(amplitude_to_fader(volume_level(state, params))),
+        ActionKind::Headphones => Some(amplitude_to_fader(headphones_level(state, params))),
+        ActionKind::Mixer => Some(amplitude_to_fader(mixer_level(state, params))),
+        ActionKind::Gain => Some((gain_level(state, params) / 24.0).clamp(0.0, 1.0)),
+        ActionKind::Rate => Some((rate_level(state, params) / rate_max(params)).clamp(0.0, 1.0)),
+        ActionKind::ReplaySpeed => Some((replay_speed_level(state, params) / 4.0).clamp(0.0, 1.0)),
+        ActionKind::Position => {
+            let (position, duration) = position_level(state, params);
+            if duration == 0 {
+                Some(0.0)
+            } else {
+                Some((position as f32 / duration as f32).clamp(0.0, 1.0))
+            }
+        }
         ActionKind::ReplayJog => Some(if state.replay_playing { 1.0 } else { 0.0 }),
         _ => None,
     }
 }
 
-/// ACTS volume is 0–1. Shortcuts and the dial use 0–100.
+pub fn rotate_command(
+    kind: ActionKind,
+    params: &ActionParams,
+    state: &VmixState,
+    ticks: i32,
+) -> Option<Command> {
+    match kind {
+        ActionKind::Volume => Some(volume_command(
+            params,
+            adjusted_percent(volume_level(state, params), ticks, params.step),
+        )),
+        ActionKind::Headphones => Some(headphones_command(
+            params,
+            adjusted_percent(headphones_level(state, params), ticks, params.step),
+        )),
+        ActionKind::Mixer => Some(mixer_command(
+            params,
+            adjusted_percent(mixer_level(state, params), ticks, params.step),
+        )),
+        ActionKind::Gain => Some(gain_command(
+            params,
+            adjust_range(
+                gain_level(state, params),
+                ticks,
+                dial_step(kind, params),
+                0.0,
+                24.0,
+            ),
+        )),
+        ActionKind::Rate => Some(rate_command(
+            params,
+            adjust_range(
+                rate_level(state, params),
+                ticks,
+                dial_step(kind, params),
+                rate_min(params),
+                rate_max(params),
+            ),
+        )),
+        ActionKind::ReplaySpeed => Some(replay_speed_command(
+            params,
+            adjust_range(
+                replay_speed_level(state, params),
+                ticks,
+                dial_step(kind, params),
+                0.1,
+                4.0,
+            ),
+        )),
+        ActionKind::Position => {
+            let (position, duration) = position_level(state, params);
+            let step = dial_step(kind, params).round() as i64;
+            let next = (position as i64 + ticks as i64 * step).max(0) as u64;
+            let next = if duration > 0 {
+                next.min(duration)
+            } else {
+                next
+            };
+            Some(position_command(params, next))
+        }
+        ActionKind::ReplayJog => Some(jog_command(params, ticks)),
+        _ => None,
+    }
+}
+
+pub fn press_command(kind: ActionKind, params: &ActionParams) -> Option<Command> {
+    match kind {
+        ActionKind::Volume => Some(mute_command(params)),
+        ActionKind::ReplayJog | ActionKind::ReplaySpeed | ActionKind::Position => {
+            Some(jog_press_command(params))
+        }
+        ActionKind::Gain => Some(gain_command(params, 0.0)),
+        ActionKind::Rate => Some(rate_command(params, 1.0)),
+        ActionKind::Headphones => Some(headphones_command(params, 100)),
+        ActionKind::Mixer => Some(mixer_command(params, 100)),
+        _ => None,
+    }
+}
+
+pub fn apply_dial_preview(
+    kind: ActionKind,
+    params: &ActionParams,
+    state: &mut VmixState,
+    ticks: i32,
+) {
+    match kind {
+        ActionKind::Headphones => {
+            let amplitude = fader_to_amplitude(
+                adjusted_percent(headphones_level(state, params), ticks, params.step) as f32
+                    / 100.0,
+            );
+            write_headphones(state, params, amplitude);
+        }
+        ActionKind::Mixer => {
+            let amplitude = fader_to_amplitude(
+                adjusted_percent(mixer_level(state, params), ticks, params.step) as f32 / 100.0,
+            );
+            if let Some(input) = state.resolve_input(&params.input) {
+                state
+                    .mixer_volume
+                    .insert((input, mixer_slot(params)), amplitude);
+            }
+        }
+        ActionKind::Gain => {
+            if let Some(input) = state.resolve_input(&params.input) {
+                state.input_gain.insert(
+                    input,
+                    adjust_range(
+                        gain_level(state, params),
+                        ticks,
+                        dial_step(kind, params),
+                        0.0,
+                        24.0,
+                    ),
+                );
+            }
+        }
+        ActionKind::Rate => {
+            if let Some(input) = state.resolve_input(&params.input) {
+                state.input_rate.insert(
+                    input,
+                    adjust_range(
+                        rate_level(state, params),
+                        ticks,
+                        dial_step(kind, params),
+                        rate_min(params),
+                        rate_max(params),
+                    ),
+                );
+            }
+        }
+        ActionKind::ReplaySpeed => {
+            let value = adjust_range(
+                replay_speed_level(state, params),
+                ticks,
+                dial_step(kind, params),
+                0.1,
+                4.0,
+            );
+            write_replay_speed(state, params, value);
+        }
+        ActionKind::Position => {
+            if let Some(input) = state.resolve_input(&params.input) {
+                let (position, duration) = position_level(state, params);
+                let step = dial_step(kind, params).round() as i64;
+                let next = (position as i64 + ticks as i64 * step).max(0) as u64;
+                let next = if duration > 0 {
+                    next.min(duration)
+                } else {
+                    next
+                };
+                state.input_position.insert(input, next);
+            }
+        }
+        ActionKind::Volume => {
+            let amplitude = fader_to_amplitude(
+                adjusted_percent(volume_level(state, params), ticks, params.step) as f32 / 100.0,
+            );
+            write_volume(state, params, amplitude);
+        }
+        _ => {}
+    }
+}
+
+/// vMix UI fader 0–1 from stored amplitude 0–1.
+/// Official: Volume = (Amplitude ^ 0.25) * 100.
+pub fn amplitude_to_fader(amplitude: f32) -> f32 {
+    normalize_amplitude(amplitude).powf(0.25)
+}
+
+/// ACTS/XML volume is amplitude. Shortcuts and the dial use the UI fader 0–100.
 pub fn level_to_percent(level: f32) -> u8 {
-    (level.clamp(0.0, 1.0) * 100.0).round().clamp(0.0, 100.0) as u8
+    (amplitude_to_fader(level) * 100.0)
+        .round()
+        .clamp(0.0, 100.0) as u8
 }
 
 pub fn adjusted_percent(level: f32, ticks: i32, step: f32) -> u8 {
@@ -288,6 +496,257 @@ pub fn volume_level(state: &VmixState, params: &ActionParams) -> f32 {
             .resolve_input(&params.input)
             .and_then(|input| state.input_volume.get(&input).copied())
             .unwrap_or(0.0),
+    }
+}
+
+pub fn fader_to_amplitude(fader: f32) -> f32 {
+    fader.clamp(0.0, 1.0).powf(4.0)
+}
+
+fn dial_step(kind: ActionKind, params: &ActionParams) -> f32 {
+    if params.step > 0.0 && (params.step - 1.0).abs() > f32::EPSILON {
+        return params.step;
+    }
+    match kind {
+        ActionKind::Rate if is_slow(params) => 0.05,
+        ActionKind::Rate | ActionKind::ReplaySpeed => 0.1,
+        ActionKind::Position => 1000.0,
+        _ => {
+            if params.step > 0.0 {
+                params.step
+            } else {
+                1.0
+            }
+        }
+    }
+}
+
+fn adjust_range(current: f32, ticks: i32, step: f32, min: f32, max: f32) -> f32 {
+    let step = if step <= 0.0 { 1.0 } else { step };
+    (current + ticks as f32 * step).clamp(min, max)
+}
+
+fn is_slow(params: &ActionParams) -> bool {
+    params.rate_mode.eq_ignore_ascii_case("slow")
+}
+
+fn rate_min(params: &ActionParams) -> f32 {
+    if is_slow(params) {
+        0.0
+    } else {
+        0.1
+    }
+}
+
+fn rate_max(params: &ActionParams) -> f32 {
+    if is_slow(params) {
+        1.0
+    } else {
+        4.0
+    }
+}
+
+fn headphones_level(state: &VmixState, params: &ActionParams) -> f32 {
+    if params.audio_target == "input" && !params.input.trim().is_empty() {
+        state
+            .resolve_input(&params.input)
+            .and_then(|input| state.input_headphones.get(&input).copied())
+            .unwrap_or(state.master_headphones)
+    } else {
+        state.master_headphones
+    }
+}
+
+fn write_headphones(state: &mut VmixState, params: &ActionParams, amplitude: f32) {
+    if params.audio_target == "input" {
+        if let Some(input) = state.resolve_input(&params.input) {
+            state.input_headphones.insert(input, amplitude);
+            return;
+        }
+    }
+    state.master_headphones = amplitude;
+}
+
+fn write_volume(state: &mut VmixState, params: &ActionParams, amplitude: f32) {
+    match params.audio_target.as_str() {
+        "master" => state.master_volume = amplitude,
+        "bus" => {
+            state.bus_volume.insert(bus_letter(params), amplitude);
+        }
+        _ => {
+            if let Some(input) = state.resolve_input(&params.input) {
+                state.input_volume.insert(input, amplitude);
+            }
+        }
+    }
+}
+
+fn write_replay_speed(state: &mut VmixState, params: &ActionParams, value: f32) {
+    match params.channel.trim().to_ascii_lowercase().as_str() {
+        "b" => state.replay_speed_b = value,
+        "a" => state.replay_speed_a = value,
+        _ => state.replay_speed = value,
+    }
+}
+
+fn mixer_slot(params: &ActionParams) -> String {
+    if params.mixer_mode.eq_ignore_ascii_case("channel") {
+        format!("ch:{}", mixer_channel(params))
+    } else {
+        format!("bus:{}", bus_letter(params))
+    }
+}
+
+fn mixer_channel(params: &ActionParams) -> u8 {
+    params
+        .index
+        .trim()
+        .parse::<u8>()
+        .ok()
+        .filter(|n| (1..=16).contains(n))
+        .unwrap_or(1)
+}
+
+fn mixer_level(state: &VmixState, params: &ActionParams) -> f32 {
+    let input = state.resolve_input(&params.input).unwrap_or(0);
+    state
+        .mixer_volume
+        .get(&(input, mixer_slot(params)))
+        .copied()
+        .unwrap_or(1.0)
+}
+
+fn gain_level(state: &VmixState, params: &ActionParams) -> f32 {
+    state
+        .resolve_input(&params.input)
+        .and_then(|input| state.input_gain.get(&input).copied())
+        .unwrap_or(0.0)
+}
+
+fn rate_level(state: &VmixState, params: &ActionParams) -> f32 {
+    state
+        .resolve_input(&params.input)
+        .and_then(|input| state.input_rate.get(&input).copied())
+        .unwrap_or(1.0)
+}
+
+fn replay_speed_level(state: &VmixState, params: &ActionParams) -> f32 {
+    let value = match params.channel.trim().to_ascii_lowercase().as_str() {
+        "b" if state.replay_speed_b > 0.0 => state.replay_speed_b,
+        "a" if state.replay_speed_a > 0.0 => state.replay_speed_a,
+        _ => state.replay_speed,
+    };
+    if value <= 0.0 {
+        1.0
+    } else {
+        value
+    }
+}
+
+fn position_level(state: &VmixState, params: &ActionParams) -> (u64, u64) {
+    let Some(input) = state.resolve_input(&params.input) else {
+        return (0, 0);
+    };
+    (
+        state.input_position.get(&input).copied().unwrap_or(0),
+        state.input_duration.get(&input).copied().unwrap_or(0),
+    )
+}
+
+fn format_timestamp(ms: u64) -> String {
+    let total = ms / 1000;
+    let hours = total / 3600;
+    let minutes = (total % 3600) / 60;
+    let seconds = total % 60;
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
+pub fn headphones_command(_params: &ActionParams, percent: u8) -> Command {
+    Command::Function {
+        name: "SetHeadphonesVolume".into(),
+        query: Some(format!("Value={percent}")),
+    }
+}
+
+pub fn mixer_command(params: &ActionParams, percent: u8) -> Command {
+    let value = percent.to_string();
+    let name = if params.mixer_mode.eq_ignore_ascii_case("channel") {
+        format!("SetVolumeChannelMixer{}", mixer_channel(params))
+    } else {
+        format!("SetVolumeBusMixer{}", bus_letter(params))
+    };
+    Command::Function {
+        name,
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Input", params.input.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn gain_command(params: &ActionParams, db: f32) -> Command {
+    let value = format_number(db);
+    Command::Function {
+        name: "SetGain".into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Input", params.input.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn rate_command(params: &ActionParams, rate: f32) -> Command {
+    let value = format_number(rate);
+    let name = if is_slow(params) {
+        "SetRateSlowMotion"
+    } else {
+        "SetRate"
+    };
+    Command::Function {
+        name: name.into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Input", params.input.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn replay_speed_command(params: &ActionParams, speed: f32) -> Command {
+    let value = format_number(speed);
+    Command::Function {
+        name: "ReplayChangeSpeed".into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Channel", params.channel.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+pub fn position_command(params: &ActionParams, ms: u64) -> Command {
+    let value = ms.to_string();
+    Command::Function {
+        name: "SetPosition".into(),
+        query: Some(join_query(&[
+            ("Value", value.as_str()),
+            ("Input", params.input.trim()),
+        ]))
+        .filter(|query| !query.is_empty()),
+    }
+}
+
+fn format_number(value: f32) -> String {
+    if (value - value.round()).abs() < 0.001 {
+        format!("{}", value.round() as i32)
+    } else {
+        format!("{value:.2}")
     }
 }
 
@@ -801,10 +1260,11 @@ mod tests {
 
     #[test]
     fn volume_round_trips_between_acts_fraction_and_percent() {
-        assert_eq!(level_to_percent(0.5), 50);
+        assert_eq!(level_to_percent(0.0625), 50);
+        assert_eq!(level_to_percent(6.25), 50);
         assert_eq!(level_to_percent(0.0), 0);
         assert_eq!(level_to_percent(1.0), 100);
-        assert_eq!(adjusted_percent(0.5, 3, 1.0), 53);
+        assert_eq!(adjusted_percent(0.0625, 3, 1.0), 53);
         let params = ActionParams {
             input: "1".into(),
             audio_target: "input".into(),
@@ -867,5 +1327,64 @@ mod tests {
         assert!(!event_affects(ActionKind::Volume, "InputBusAAudio"));
         assert!(event_affects(ActionKind::ReplayJog, "ReplayPlaying"));
         assert!(!event_affects(ActionKind::ReplayJog, "Input"));
+        assert!(event_affects(ActionKind::Headphones, "MasterHeadphones"));
+        assert!(event_affects(ActionKind::Position, "InputPlaying"));
+        assert!(!event_affects(ActionKind::Gain, "InputVolume"));
+    }
+
+    #[test]
+    fn new_dials_send_official_shortcut_ranges() {
+        let input = ActionParams {
+            input: "2".into(),
+            bus: "M".into(),
+            mixer_mode: "bus".into(),
+            index: "4".into(),
+            channel: "B".into(),
+            rate_mode: "slow".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = gain_command(&input, 6.0) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetGain");
+        assert_eq!(query.as_deref(), Some("Value=6&Input=2"));
+        let Command::Function { name, query } = headphones_command(&input, 40) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetHeadphonesVolume");
+        assert_eq!(query.as_deref(), Some("Value=40"));
+        let Command::Function { name, query } = mixer_command(&input, 80) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetVolumeBusMixerM");
+        assert_eq!(query.as_deref(), Some("Value=80&Input=2"));
+        let channel = ActionParams {
+            mixer_mode: "channel".into(),
+            index: "12".into(),
+            input: "3".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = mixer_command(&channel, 25) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetVolumeChannelMixer12");
+        assert_eq!(query.as_deref(), Some("Value=25&Input=3"));
+        let Command::Function { name, query } = rate_command(&input, 0.5) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetRateSlowMotion");
+        assert_eq!(query.as_deref(), Some("Value=0.50&Input=2"));
+        let Command::Function { name, query } = replay_speed_command(&input, 2.0) else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayChangeSpeed");
+        assert_eq!(query.as_deref(), Some("Value=2&Channel=B"));
+        let Command::Function { name, query } = position_command(&input, 15000) else {
+            panic!("function");
+        };
+        assert_eq!(name, "SetPosition");
+        assert_eq!(query.as_deref(), Some("Value=15000&Input=2"));
+        assert_eq!(format_timestamp(15000), "00:15");
+        assert_eq!(format_timestamp(3_661_000), "1:01:01");
     }
 }

@@ -43,7 +43,9 @@ const emptyParams = (): ActionParams => ({
   functionName: "",
   extra: "",
   raw: "",
-  step: 1
+  step: 1,
+  rateMode: "rate",
+  mixerMode: "bus"
 });
 
 const actionDefaults: ActionSettings = {
@@ -415,22 +417,53 @@ function ActionFields({
   if (kind === "shortcut" || kind.startsWith("shortcut-")) {
     return <ShortcutFields category={categoryForShortcutKind(kind)} params={params} onChange={onChange} />;
   }
-  if (kind === "replayjog") {
+  if (kind === "replayjog" || kind === "replayspeed") {
     return (
       <>
         <SelectField label="Channel" value={params.channel || "a"} options={["a", "b"]} onChange={(channel) => onChange({ ...params, channel })} />
-        <div className="sdpi-item">
-          <div className="sdpi-item-label">Step</div>
-          <input
-            className="sdpi-item-value"
-            type="number"
-            min={1}
-            max={100}
-            step={1}
-            value={params.step}
-            onChange={(event) => onChange({ ...params, step: Number(event.target.value) })}
-          />
-        </div>
+        <StepField params={params} onChange={onChange} min={kind === "replayspeed" ? 0.05 : 1} max={kind === "replayspeed" ? 1 : 100} increment={kind === "replayspeed" ? 0.05 : 1} />
+      </>
+    );
+  }
+  if (kind === "gain") {
+    return (
+      <>
+        <InputField params={params} inputs={inputs} onChange={onChange} />
+        <StepField params={params} onChange={onChange} min={0.5} max={6} increment={0.5} />
+      </>
+    );
+  }
+  if (kind === "headphones") {
+    return <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />;
+  }
+  if (kind === "mixer") {
+    return (
+      <>
+        <InputField params={params} inputs={inputs} onChange={onChange} />
+        <SelectField label="Mixer" value={params.mixerMode} options={["bus", "channel"]} onChange={(mixerMode) => onChange({ ...params, mixerMode })} />
+        {params.mixerMode === "channel" ? (
+          <NumberSelect label="Channel" value={Number(params.index) || 1} max={16} onChange={(index) => onChange({ ...params, index: String(index) })} />
+        ) : (
+          <SelectField label="Bus" value={params.bus} options={["A", "B", "C", "D", "E", "F", "G", "M"]} onChange={(bus) => onChange({ ...params, bus })} />
+        )}
+        <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />
+      </>
+    );
+  }
+  if (kind === "rate") {
+    return (
+      <>
+        <InputField params={params} inputs={inputs} onChange={onChange} />
+        <SelectField label="Mode" value={params.rateMode} options={["rate", "slow"]} onChange={(rateMode) => onChange({ ...params, rateMode })} />
+        <StepField params={params} onChange={onChange} min={0.05} max={1} increment={0.05} />
+      </>
+    );
+  }
+  if (kind === "position") {
+    return (
+      <>
+        <InputField params={params} inputs={inputs} onChange={onChange} />
+        <StepField params={params} onChange={onChange} min={100} max={10000} increment={100} />
       </>
     );
   }
@@ -529,20 +562,7 @@ function AudioFields({
       {(kind === "bussend" || params.audioTarget === "bus") && (
         <SelectField label="Bus" value={params.bus} options={buses} onChange={(bus) => onChange({ ...params, bus })} />
       )}
-      {kind === "volume" && (
-        <div className="sdpi-item">
-          <div className="sdpi-item-label">Step</div>
-          <input
-            className="sdpi-item-value"
-            type="number"
-            min={1}
-            max={100}
-            step={1}
-            value={params.step}
-            onChange={(event) => onChange({ ...params, step: Number(event.target.value) })}
-          />
-        </div>
-      )}
+      {kind === "volume" && <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />}
     </>
   );
 }
@@ -768,6 +788,35 @@ function MixField({ value, mixes, onChange }: { value: number; mixes: number[]; 
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function StepField({
+  params,
+  onChange,
+  min,
+  max,
+  increment
+}: {
+  params: ActionParams;
+  onChange: (params: ActionParams) => void;
+  min: number;
+  max: number;
+  increment: number;
+}) {
+  return (
+    <div className="sdpi-item">
+      <div className="sdpi-item-label">Step</div>
+      <input
+        className="sdpi-item-value"
+        type="number"
+        min={min}
+        max={max}
+        step={increment}
+        value={params.step}
+        onChange={(event) => onChange({ ...params, step: Number(event.target.value) })}
+      />
     </div>
   );
 }

@@ -39,5 +39,11 @@
   "dev.mikanseilaboratory.vmix.shortcut-browser": { "Name": "Browser Shortcut", "Tooltip": "Send a vMix Browser shortcut function." },
   "dev.mikanseilaboratory.vmix.raw": { "Name": "Raw TCP", "Tooltip": "Send a raw TCP command." },
   "dev.mikanseilaboratory.vmix.volume": { "Name": "Volume Dial", "Tooltip": "Adjust volume. Press to mute." },
-  "dev.mikanseilaboratory.vmix.replayjog": { "Name": "Replay Jog", "Tooltip": "Jog replay frames. Press to play or pause." }
+  "dev.mikanseilaboratory.vmix.replayjog": { "Name": "Replay Jog", "Tooltip": "Jog replay frames. Press to play or pause." },
+  "dev.mikanseilaboratory.vmix.gain": { "Name": "Gain Dial", "Tooltip": "Adjust input gain. Press to reset to 0 dB." },
+  "dev.mikanseilaboratory.vmix.headphones": { "Name": "Headphones Dial", "Tooltip": "Adjust master headphones. Press for full." },
+  "dev.mikanseilaboratory.vmix.mixer": { "Name": "Mixer Dial", "Tooltip": "Adjust a bus or channel mixer send." },
+  "dev.mikanseilaboratory.vmix.rate": { "Name": "Rate Dial", "Tooltip": "Adjust playback rate or slow motion. Press for 1.00x." },
+  "dev.mikanseilaboratory.vmix.replayspeed": { "Name": "Replay Speed", "Tooltip": "Adjust replay speed. Press to play or pause." },
+  "dev.mikanseilaboratory.vmix.position": { "Name": "Position Dial", "Tooltip": "Scrub media position. Press to play or pause." }
 }

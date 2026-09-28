@@ -503,20 +503,13 @@ impl AppState {
         let targets = self.targets_for(&snapshot.settings).await;
         for id in &targets {
             let params = snapshot.settings.params_for(id);
-            match snapshot.kind {
-                ActionKind::Volume => {
-                    let cached = self.pool.state(id).unwrap_or_default();
-                    let percent = ops::adjusted_percent(
-                        ops::volume_level(&cached, params),
-                        ticks,
-                        params.step,
-                    );
-                    let _ = self.pool.send(id, ops::volume_command(params, percent));
-                }
-                ActionKind::ReplayJog => {
-                    let _ = self.pool.send(id, ops::jog_command(params, ticks));
-                }
-                _ => {}
+            let cached = self.pool.state(id).unwrap_or_default();
+            if let Some(command) = ops::rotate_command(snapshot.kind, params, &cached, ticks) {
+                let _ = self.pool.send(id, command);
+                self.pool.update_state(id, |state| {
+                    ops::apply_dial_preview(snapshot.kind, params, state, ticks)
+                });
+                self.refresh_instance(context, id).await;
             }
         }
     }
@@ -528,10 +521,8 @@ impl AppState {
         let targets = self.targets_for(&snapshot.settings).await;
         for id in &targets {
             let params = snapshot.settings.params_for(id);
-            let command = match snapshot.kind {
-                ActionKind::Volume => ops::mute_command(params),
-                ActionKind::ReplayJog => ops::jog_press_command(params),
-                _ => continue,
+            let Some(command) = ops::press_command(snapshot.kind, params) else {
+                continue;
             };
             let _ = self.pool.send(id, command);
         }
@@ -621,7 +612,12 @@ impl AppState {
                 .iter()
                 .map(|id| key.levels.get(id).copied().unwrap_or(0.0))
                 .collect();
-            let (layout, payload) = render::dial_feedback(key.kind, &visual, &levels, &foreground);
+            let captions: Vec<String> = targets
+                .iter()
+                .map(|id| key.titles.get(id).cloned().unwrap_or_default())
+                .collect();
+            let (layout, payload) =
+                render::dial_feedback(key.kind, &visual, &levels, &captions, &foreground);
             let encoded = payload.to_string();
             if key.last_layout.as_deref() == Some(layout.as_str())
                 && key.last_feedback.as_deref() == Some(encoded.as_str())
