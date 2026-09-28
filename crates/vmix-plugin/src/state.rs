@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -23,6 +23,7 @@ struct LiveKey {
     titles: HashMap<String, String>,
     levels: HashMap<String, f32>,
     title: String,
+    last_layout: Option<String>,
     last_feedback: Option<String>,
     multi: bool,
 }
@@ -30,6 +31,7 @@ struct LiveKey {
 struct Runtime {
     sender: Mutex<Option<CommandSender>>,
     keys: Mutex<HashMap<String, LiveKey>>,
+    inspectors: Mutex<HashSet<String>>,
     global: Mutex<GlobalSettings>,
     pending: Mutex<HashMap<String, String>>,
     /// Serializes the provisional localhost connection with the saved settings.
@@ -57,6 +59,7 @@ impl AppState {
             runtime: Arc::new(Runtime {
                 sender: Mutex::new(None),
                 keys: Mutex::new(HashMap::new()),
+                inspectors: Mutex::new(HashSet::new()),
                 global: Mutex::new(GlobalSettings::default()),
                 pending: Mutex::new(HashMap::new()),
                 connect: Mutex::new(()),
@@ -233,6 +236,7 @@ impl AppState {
                 titles: HashMap::new(),
                 levels,
                 title: String::new(),
+                last_layout: None,
                 last_feedback: None,
                 multi,
             },
@@ -241,10 +245,16 @@ impl AppState {
         // The property inspector matches status by the saved instance id, not "localhost".
         self.reconcile_provisional().await;
         self.refresh_key(context).await;
+        if self.runtime.inspectors.lock().await.contains(context) {
+            let context = context.to_string();
+            self.push_status(&context).await;
+            self.push_inputs_to(std::slice::from_ref(&context)).await;
+        }
     }
 
     pub async fn remove_key(&self, context: &str) {
         self.runtime.keys.lock().await.remove(context);
+        self.runtime.inspectors.lock().await.remove(context);
     }
 
     pub fn press(&self, context: &str) {
@@ -542,14 +552,16 @@ impl AppState {
             }
             Some("ready") => {
                 tracing::info!(context, "property inspector ready");
+                let context = context.to_string();
+                self.runtime.inspectors.lock().await.insert(context.clone());
                 self.bootstrap_localhost().await;
                 if !self.runtime.settings_applied.load(Ordering::SeqCst) {
                     if let Some(sender) = self.runtime.sender.lock().await.clone() {
                         let _ = sender.get_global_settings(None);
                     }
                 }
-                self.push_status(context).await;
-                self.push_inputs().await;
+                self.push_status(&context).await;
+                self.push_inputs_to(std::slice::from_ref(&context)).await;
             }
             _ => {}
         }
@@ -569,6 +581,7 @@ impl AppState {
                 titles: key.titles.clone(),
                 levels: key.levels.clone(),
                 title: key.title.clone(),
+                last_layout: key.last_layout.clone(),
                 last_feedback: key.last_feedback.clone(),
                 multi: key.multi,
             })
@@ -608,23 +621,24 @@ impl AppState {
                 .iter()
                 .map(|id| key.levels.get(id).copied().unwrap_or(0.0))
                 .collect();
-            let value_text = match key.kind {
-                ActionKind::Volume => format!("Vol {}%", key.title),
-                ActionKind::ReplayJog => format!("Replay {}", key.title),
-                _ => key.title.clone(),
-            };
-            let image = render::dial_image(key.kind, &visual, &levels, &value_text, &foreground);
-            if key.last_feedback.as_deref() == Some(image.as_str()) {
-                return;
-            }
-            if sender
-                .set_feedback(context, &json!({ "canvas": image }))
-                .is_err()
+            let (layout, payload) = render::dial_feedback(key.kind, &visual, &levels, &foreground);
+            let encoded = payload.to_string();
+            if key.last_layout.as_deref() == Some(layout.as_str())
+                && key.last_feedback.as_deref() == Some(encoded.as_str())
             {
                 return;
             }
+            if key.last_layout.as_deref() != Some(layout.as_str())
+                && sender.set_feedback_layout(context, &layout).is_err()
+            {
+                return;
+            }
+            if sender.set_feedback(context, &payload).is_err() {
+                return;
+            }
             if let Some(live) = self.runtime.keys.lock().await.get_mut(context) {
-                live.last_feedback = Some(image);
+                live.last_layout = Some(layout);
+                live.last_feedback = Some(encoded);
             }
             return;
         }
@@ -655,17 +669,26 @@ impl AppState {
         }
     }
 
+    async fn open_inspectors(&self) -> Vec<String> {
+        self.runtime.inspectors.lock().await.iter().cloned().collect()
+    }
+
     async fn push_status_to_open_inspectors(&self) {
-        let contexts: Vec<String> = self.runtime.keys.lock().await.keys().cloned().collect();
-        for context in contexts {
+        for context in self.open_inspectors().await {
             self.push_status(&context).await;
         }
     }
 
     pub async fn inspector_opened(&self, context: &str) {
         tracing::info!(context, "property inspector opened");
-        self.push_status(context).await;
-        self.push_inputs().await;
+        let context = context.to_string();
+        self.runtime.inspectors.lock().await.insert(context.clone());
+        self.push_status(&context).await;
+        self.push_inputs_to(std::slice::from_ref(&context)).await;
+    }
+
+    pub async fn inspector_closed(&self, context: &str) {
+        self.runtime.inspectors.lock().await.remove(context);
     }
 
     async fn push_status(&self, context: &str) {
@@ -676,7 +699,14 @@ impl AppState {
     }
 
     async fn push_inputs(&self) {
-        let contexts: Vec<String> = self.runtime.keys.lock().await.keys().cloned().collect();
+        let contexts = self.open_inspectors().await;
+        self.push_inputs_to(&contexts).await;
+    }
+
+    async fn push_inputs_to(&self, contexts: &[String]) {
+        if contexts.is_empty() {
+            return;
+        }
         let mut items = Vec::new();
         for config in self.pool.configs() {
             let Some(state) = self.pool.state(&config.id) else {
@@ -712,9 +742,9 @@ impl AppState {
             inputs = input_count,
             "push vmix inputs"
         );
+        let payload = json!({"type": "inputs", "items": items});
         for context in contexts {
-            self.send_inspector(&context, &json!({"type": "inputs", "items": items}))
-                .await;
+            self.send_inspector(context, &payload).await;
         }
     }
 
@@ -722,25 +752,7 @@ impl AppState {
         let Some(sender) = self.runtime.sender.lock().await.clone() else {
             return;
         };
-        let Some(action) = self
-            .runtime
-            .keys
-            .lock()
-            .await
-            .get(context)
-            .map(|key| key.action.clone())
-        else {
-            return;
-        };
-        let command = json!({
-            "action": action,
-            "event": "sendToPropertyInspector",
-            "context": context,
-            "payload": payload
-        });
-        if let Ok(body) = serde_json::to_string(&command) {
-            let _ = sender.send_raw(body);
-        }
+        let _ = sender.send_to_property_inspector(context, payload);
     }
 }
 

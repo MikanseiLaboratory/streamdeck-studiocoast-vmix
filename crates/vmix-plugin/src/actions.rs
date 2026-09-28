@@ -59,6 +59,14 @@ macro_rules! vmix_key {
                 Ok(())
             }
 
+            async fn on_property_inspector_did_disappear(
+                &mut self,
+                ctx: &ActionContext<'_, Self::Settings, Self::State>,
+            ) -> Result<()> {
+                ctx.state().inspector_closed(&ctx.identity().context).await;
+                Ok(())
+            }
+
             async fn on_property_inspector_message(
                 &mut self,
                 payload: &Value,
@@ -338,6 +346,14 @@ macro_rules! vmix_dial {
                 ctx: &ActionContext<'_, Self::Settings, Self::State>,
             ) -> Result<()> {
                 ctx.state().inspector_opened(&ctx.identity().context).await;
+                Ok(())
+            }
+
+            async fn on_property_inspector_did_disappear(
+                &mut self,
+                ctx: &ActionContext<'_, Self::Settings, Self::State>,
+            ) -> Result<()> {
+                ctx.state().inspector_closed(&ctx.identity().context).await;
                 Ok(())
             }
 

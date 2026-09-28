@@ -126,6 +126,8 @@ export function App() {
 
   useEffect(() => {
     send({ type: "ready" });
+    const retry = window.setTimeout(() => send({ type: "ready" }), 250);
+    return () => window.clearTimeout(retry);
   }, [send]);
 
   useEffect(() => {

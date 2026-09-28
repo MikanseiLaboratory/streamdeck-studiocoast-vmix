@@ -140,69 +140,123 @@ fn icon_path(kind: ActionKind) -> &'static str {
     }
 }
 
-pub fn dial_image(
-    kind: ActionKind,
-    segments: &[Segment],
-    levels: &[f32],
-    value_text: &str,
-    foreground: &str,
-) -> String {
-    let strip = if segments.is_empty() {
-        0.0
-    } else if segments.len() <= 6 {
-        16.0
-    } else {
-        10.0
-    };
-    let width = if segments.is_empty() {
-        0.0
-    } else {
-        200.0 / segments.len() as f32
-    };
-    let mut bars = String::new();
-    for (index, segment) in segments.iter().enumerate() {
-        let x = width * index as f32;
-        let y = 100.0 - strip;
-        let fill = fill_for(segment);
-        let level = levels.get(index).copied().unwrap_or(0.0).clamp(0.0, 1.0);
-        let track = "#2a3140";
-        bars.push_str(&format!(
-            r#"<rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{strip:.2}" fill="{track}"/>"#
-        ));
-        let bar_width = if kind == ActionKind::Volume {
-            width * level
-        } else {
-            width
-        };
-        if bar_width > 0.0 {
-            bars.push_str(&format!(
-                r#"<rect x="{x:.2}" y="{y:.2}" width="{bar_width:.2}" height="{strip:.2}" fill="{fill}"/>"#
-            ));
-        }
-        if segment.state == SegmentState::Unavailable {
-            bars.push_str(&format!(
-                r#"<rect x="{x:.2}" y="{y:.2}" width="{width:.2}" height="{strip:.2}" fill="url(#hatch)"/>"#
-            ));
-        }
-        if segments.len() <= 6 && strip > 0.0 {
-            let label = escape(&initial(&segment.label));
-            bars.push_str(&format!(
-                r#"<text x="{tx:.2}" y="96" text-anchor="middle" font-size="10" font-family="sans-serif" font-weight="700" fill="{foreground}">{label}</text>"#,
-                tx = x + width / 2.0,
-            ));
-        }
-    }
-    let icon = icon_path(kind);
-    let hatch = "#111";
-    let background = "#1b1f27";
-    let title = escape(value_text);
+pub const LAYOUT_B1: &str = "$B1";
+pub const LAYOUT_C1: &str = "$C1";
+pub const LAYOUT_MULTI: &str = "layouts/dial-multi.json";
+
+pub fn dial_icon(kind: ActionKind, foreground: &str) -> String {
+    let path = icon_path(kind);
     let svg = format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" viewBox="0 0 200 100"><defs><pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" stroke="{hatch}" stroke-width="2"/></pattern></defs><rect width="200" height="100" rx="12" fill="{background}"/><text x="100" y="18" text-anchor="middle" font-size="14" font-family="sans-serif" font-weight="700" fill="{foreground}">{title}</text><g fill="none" stroke="{foreground}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" transform="translate(68 22) scale(0.85)">{icon}</g>{bars}</svg>"#
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 64 64"><g fill="none" stroke="{foreground}" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">{path}</g></svg>"#
     );
     format!(
         "data:image/svg+xml;base64,{}",
         STANDARD.encode(svg.as_bytes())
     )
+}
+
+fn indicator(segment: Option<&Segment>, level: f32, kind: ActionKind) -> serde_json::Value {
+    let connected = segment.is_some_and(|item| item.state != SegmentState::Unavailable);
+    let color = segment.map(fill_for).unwrap_or_else(|| "#4c8dff".into());
+    let value = if kind == ActionKind::ReplayJog {
+        if level > 0.5 {
+            100
+        } else {
+            0
+        }
+    } else {
+        (level.clamp(0.0, 1.0) * 100.0).round() as i64
+    };
+    serde_json::json!({
+        "value": value,
+        "enabled": connected,
+        "bar_fill_c": color,
+    })
+}
+
+fn value_label(kind: ActionKind, level: f32) -> String {
+    match kind {
+        ActionKind::Volume => format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as u8),
+        ActionKind::ReplayJog => {
+            if level > 0.5 {
+                "Play".into()
+            } else {
+                "Pause".into()
+            }
+        }
+        _ => String::new(),
+    }
+}
+
+/// Layout id and `setFeedback` payload for Stream Deck+ encoders.
+pub fn dial_feedback(
+    kind: ActionKind,
+    segments: &[Segment],
+    levels: &[f32],
+    foreground: &str,
+) -> (String, serde_json::Value) {
+    let icon = dial_icon(kind, foreground);
+    match segments.len() {
+        0 | 1 => {
+            let segment = segments.first();
+            let level = levels.first().copied().unwrap_or(0.0);
+            let title = match kind {
+                ActionKind::Volume => segment
+                    .map(|item| item.label.clone())
+                    .unwrap_or_else(|| "Volume".into()),
+                ActionKind::ReplayJog => "Replay".into(),
+                _ => String::new(),
+            };
+            (
+                LAYOUT_B1.to_string(),
+                serde_json::json!({
+                    "title": title,
+                    "value": value_label(kind, level),
+                    "icon": icon,
+                    "indicator": indicator(segment, level, kind),
+                }),
+            )
+        }
+        2 => {
+            let title = format!(
+                "{} · {}",
+                value_label(kind, levels.first().copied().unwrap_or(0.0)),
+                value_label(kind, levels.get(1).copied().unwrap_or(0.0))
+            );
+            (
+                LAYOUT_C1.to_string(),
+                serde_json::json!({
+                    "title": title,
+                    "icon1": icon,
+                    "icon2": icon,
+                    "indicator1": indicator(segments.first(), levels.first().copied().unwrap_or(0.0), kind),
+                    "indicator2": indicator(segments.get(1), levels.get(1).copied().unwrap_or(0.0), kind),
+                }),
+            )
+        }
+        _ => {
+            let labels: Vec<String> = segments
+                .iter()
+                .zip(levels.iter().copied().chain(std::iter::repeat(0.0)))
+                .take(4)
+                .map(|(segment, level)| {
+                    format!("{} {}", initial(&segment.label), value_label(kind, level))
+                })
+                .collect();
+            let mut payload = serde_json::json!({ "title": labels.join(" · ") });
+            for index in 0..4 {
+                payload[format!("indicator{}", index + 1)] = match segments.get(index) {
+                    Some(segment) => indicator(
+                        Some(segment),
+                        levels.get(index).copied().unwrap_or(0.0),
+                        kind,
+                    ),
+                    None => serde_json::json!({ "value": 0, "enabled": false }),
+                };
+            }
+            (LAYOUT_MULTI.to_string(), payload)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -223,9 +277,33 @@ mod tests {
     }
 
     #[test]
-    fn dial_image_draws_one_bar_per_instance() {
-        let image = dial_image(
+    fn dial_feedback_uses_b1_items_for_one_instance() {
+        let (layout, payload) = dial_feedback(
             ActionKind::Volume,
+            &[Segment {
+                label: "Local".into(),
+                color: "#4c8dff".into(),
+                state: SegmentState::Active,
+            }],
+            &[0.53],
+            "#f4f7fb",
+        );
+        assert_eq!(layout, LAYOUT_B1);
+        assert_eq!(payload["title"], "Local");
+        assert_eq!(payload["value"], "53%");
+        assert_eq!(payload["indicator"]["value"], 53);
+        assert_eq!(payload["indicator"]["enabled"], true);
+        assert_eq!(payload["indicator"]["bar_fill_c"], "#4c8dff");
+        assert!(payload["icon"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/svg+xml;base64,"));
+    }
+
+    #[test]
+    fn dial_feedback_uses_c1_items_for_two_instances() {
+        let (layout, payload) = dial_feedback(
+            ActionKind::ReplayJog,
             &[
                 Segment {
                     label: "Local".into(),
@@ -238,15 +316,13 @@ mod tests {
                     state: SegmentState::Inactive,
                 },
             ],
-            &[0.5, 0.2],
-            "Vol 50%",
+            &[1.0, 0.0],
             "#f4f7fb",
         );
-        assert!(image.starts_with("data:image/svg+xml;base64,"));
-        let svg =
-            String::from_utf8(STANDARD.decode(image.rsplit_once(',').unwrap().1).unwrap()).unwrap();
-        assert!(svg.contains("width=\"200\""));
-        assert!(svg.contains("Vol 50%"));
-        assert!(svg.matches("<rect").count() >= 4);
+        assert_eq!(layout, LAYOUT_C1);
+        assert_eq!(payload["title"], "Play · Pause");
+        assert_eq!(payload["indicator1"]["value"], 100);
+        assert_eq!(payload["indicator2"]["value"], 0);
+        assert_eq!(payload["indicator2"]["enabled"], true);
     }
 }
