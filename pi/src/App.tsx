@@ -499,9 +499,13 @@ function ActionFields({
     return (
       <>
         <ReplayChannelField params={params} onChange={onChange} />
-        <StepField params={params} onChange={onChange} min={kind === "replayspeed" ? 0.05 : 1} max={kind === "replayspeed" ? 1 : 100} increment={kind === "replayspeed" ? 0.05 : 1} />
+        {kind === "replayspeed" ? (
+          <ReplaySpeedStepField params={params} onChange={onChange} />
+        ) : (
+          <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />
+        )}
         {kind === "replayspeed" && (
-          <p className="shortcut-note">Each tick adds or subtracts this step. ReplayChangeSpeed does not set an absolute speed.</p>
+          <p className="shortcut-note">Each tick adds or subtracts this step. 0.01 is 1%.</p>
         )}
       </>
     );
@@ -1336,6 +1340,18 @@ function SelectField({
       </select>
     </div>
   );
+}
+
+function ReplaySpeedStepField({ params, onChange }: { params: ActionParams; onChange: (params: ActionParams) => void }) {
+  const paramsRef = useRef(params);
+  const onChangeRef = useRef(onChange);
+  paramsRef.current = params;
+  onChangeRef.current = onChange;
+  useEffect(() => {
+    if (Math.abs(params.step - 1) > 1e-6) return;
+    onChangeRef.current({ ...paramsRef.current, step: 0.01 });
+  }, [params.step]);
+  return <StepField params={params} onChange={onChange} min={0.01} max={0.1} increment={0.01} />;
 }
 
 function ReplayChannelField({ params, onChange }: { params: ActionParams; onChange: (params: ActionParams) => void }) {

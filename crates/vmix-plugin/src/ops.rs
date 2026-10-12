@@ -189,7 +189,7 @@ pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> 
             .map(|rate| format!("{rate:.2}x"))
             .unwrap_or_default(),
         ActionKind::ReplaySpeed => replay_speed_level(state, params)
-            .map(|speed| format!("{speed:.2}x"))
+            .map(replay_speed_percent)
             .unwrap_or_default(),
         ActionKind::Position => format_timestamp(position_level(state, params).0),
         ActionKind::ReplayJog => {
@@ -676,7 +676,8 @@ fn dial_step(kind: ActionKind, params: &ActionParams) -> f32 {
     }
     match kind {
         ActionKind::Rate if is_slow(params) => 0.05,
-        ActionKind::Rate | ActionKind::ReplaySpeed => 0.1,
+        ActionKind::Rate => 0.1,
+        ActionKind::ReplaySpeed => 0.01,
         ActionKind::Position => 1000.0,
         _ => {
             if params.step > 0.0 {
@@ -872,6 +873,10 @@ pub fn position_command(params: &ActionParams, ms: u64) -> Command {
         ]))
         .filter(|query| !query.is_empty()),
     }
+}
+
+fn replay_speed_percent(speed: f32) -> String {
+    format!("{}%", (speed * 100.0).round() as i32)
 }
 
 fn format_number(value: f32) -> String {
@@ -1733,6 +1738,19 @@ mod tests {
             panic!("function");
         };
         assert_eq!(query.as_deref(), Some("Value=-0.20&Channel=A"));
+        let default_step = ActionParams {
+            channel: "A".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { query, .. } =
+            rotate_command(ActionKind::ReplaySpeed, &default_step, &loaded(), 1).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(query.as_deref(), Some("Value=0.01&Channel=A"));
+        assert_eq!(replay_speed_percent(1.0), "100%");
+        assert_eq!(replay_speed_percent(0.25), "25%");
+        assert_eq!(replay_speed_percent(2.0), "200%");
     }
 
     #[test]

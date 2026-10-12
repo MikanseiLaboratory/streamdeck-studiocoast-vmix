@@ -276,8 +276,9 @@ fn value_label(kind: ActionKind, level: Option<f32>, caption: Option<&str>) -> S
             }
         }
         ActionKind::Gain => format!("{:.1} dB", level.clamp(0.0, 1.0) * 24.0),
-        ActionKind::Rate | ActionKind::ReplaySpeed => {
-            format!("{:.2}x", level.clamp(0.0, 1.0) * 4.0)
+        ActionKind::Rate => format!("{:.2}x", level.clamp(0.0, 1.0) * 4.0),
+        ActionKind::ReplaySpeed => {
+            format!("{}%", (level.clamp(0.0, 1.0) * 400.0).round() as i32)
         }
         ActionKind::Position => format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as u8),
         _ => String::new(),
@@ -448,6 +449,8 @@ mod tests {
         assert_eq!(layout, LAYOUT_B1);
         assert_eq!(payload["title"], "Local");
         assert_eq!(payload["value"], "53%");
+        let (_, speed) = dial_feedback(ActionKind::ReplaySpeed, &[], &[Some(0.25)], &[], "#f4f7fb");
+        assert_eq!(speed["value"], "100%");
         assert_eq!(payload["indicator"]["value"], 53);
         assert_eq!(payload["indicator"]["enabled"], true);
         assert_eq!(payload["indicator"]["bar_fill_c"], "#4c8dff");
