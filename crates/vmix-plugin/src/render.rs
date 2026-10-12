@@ -171,7 +171,9 @@ fn icon_path(kind: ActionKind) -> &'static str {
         ActionKind::List => r#"<path d="M16 18h32M16 32h32M16 46h32"/>"#,
         ActionKind::Title => r#"<path d="M12 20h40M20 20v24M44 20v24"/>"#,
         ActionKind::Shortcut => r#"<path d="M16 40l12-24h8l12 24M22 32h20"/>"#,
-        ActionKind::Raw => r#"<path d="M20 16l-10 16 10 16M44 16l10 16-10 16"/>"#,
+        ActionKind::Raw | ActionKind::RawDial => {
+            r#"<path d="M20 16l-10 16 10 16M44 16l10 16-10 16"/>"#
+        }
         ActionKind::Volume => r#"<path d="M12 26h8l12-10v36L20 42h-8zM40 24a12 12 0 0 1 0 16"/>"#,
         ActionKind::ReplayJog => {
             r#"<path d="M16 32a16 16 0 1 0 4-10M16 14v10h10M10 52h12M42 52h12"/>"#
@@ -273,6 +275,7 @@ fn dial_title(kind: ActionKind, segment: Option<&Segment>) -> String {
         ActionKind::Rate => "Rate".into(),
         ActionKind::ReplaySpeed => "Speed".into(),
         ActionKind::Position => "Pos".into(),
+        ActionKind::RawDial => "Raw".into(),
         _ => String::new(),
     }
 }

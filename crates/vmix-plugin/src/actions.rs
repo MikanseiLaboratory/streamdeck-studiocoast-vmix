@@ -429,6 +429,12 @@ fn trigger_for(kind: ActionKind) -> TriggerDescription {
             touch: Some("Play / Pause".into()),
             long_touch: None,
         },
+        ActionKind::RawDial => TriggerDescription {
+            rotate: Some("Function".into()),
+            push: Some("Function".into()),
+            touch: Some("Function".into()),
+            long_touch: None,
+        },
         _ => TriggerDescription::default(),
     }
 }
@@ -472,6 +478,11 @@ vmix_dial!(
     PositionDial,
     "dev.mikanseilaboratory.vmix.position",
     ActionKind::Position
+);
+vmix_dial!(
+    RawDial,
+    "dev.mikanseilaboratory.vmix.rawdial",
+    ActionKind::RawDial
 );
 
 pub fn force_link() {
@@ -520,5 +531,6 @@ pub fn force_link() {
         std::any::TypeId::of::<RateDial>(),
         std::any::TypeId::of::<ReplaySpeedDial>(),
         std::any::TypeId::of::<PositionDial>(),
+        std::any::TypeId::of::<RawDial>(),
     );
 }

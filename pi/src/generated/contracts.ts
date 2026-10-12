@@ -32,17 +32,21 @@ activeColor: string,
  */
 release: ShortcutCall, 
 /**
- * Dial touch. An empty function name keeps the built-in press.
+ * Raw Function dial, clockwise. Empty sends nothing. Same line as `raw`.
  */
-touch: ShortcutCall, 
+rawRotateUp: string, 
 /**
- * Clockwise dial turn. Empty keeps the built-in rotate.
+ * Raw Function dial, counter-clockwise. Empty sends nothing.
  */
-rotateUp: ShortcutCall, 
+rawRotateDown: string, 
 /**
- * Counter-clockwise dial turn. Empty keeps the built-in rotate.
+ * Raw Function dial push. Empty sends nothing.
  */
-rotateDown: ShortcutCall, };
+rawPush: string, 
+/**
+ * Raw Function dial touch. Empty sends nothing.
+ */
+rawTouch: string, };
 
 export type ShortcutCall = { functionName: string, input: string, value: string, channel: string, mix: number, durationMs: string, selectedName: string, extra: string, };
 

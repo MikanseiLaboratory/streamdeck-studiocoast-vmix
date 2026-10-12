@@ -45,5 +45,6 @@
   "dev.mikanseilaboratory.vmix.mixer": { "Name": "Mixer Dial", "Tooltip": "Adjust a bus or channel mixer send." },
   "dev.mikanseilaboratory.vmix.rate": { "Name": "Rate Dial", "Tooltip": "Adjust playback rate or slow motion. Press for 1.00x." },
   "dev.mikanseilaboratory.vmix.replayspeed": { "Name": "Replay Speed", "Tooltip": "Adjust replay speed. Press to play or pause." },
-  "dev.mikanseilaboratory.vmix.position": { "Name": "Position Dial", "Tooltip": "Scrub media position. Press to play or pause." }
+  "dev.mikanseilaboratory.vmix.position": { "Name": "Position Dial", "Tooltip": "Scrub media position. Press to play or pause." },
+  "dev.mikanseilaboratory.vmix.rawdial": { "Name": "Raw Function", "Tooltip": "Send a vMix function from the dial. Type Play&Input=1, without the FUNCTION word." }
 }

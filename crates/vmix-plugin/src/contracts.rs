@@ -260,15 +260,18 @@ pub struct ActionParams {
     /// Sent on key up. An empty function name sends nothing.
     #[serde(default)]
     pub release: ShortcutCall,
-    /// Dial touch. An empty function name keeps the built-in press.
+    /// Raw Function dial, clockwise. Empty sends nothing. Same line as `raw`.
     #[serde(default)]
-    pub touch: ShortcutCall,
-    /// Clockwise dial turn. Empty keeps the built-in rotate.
+    pub raw_rotate_up: String,
+    /// Raw Function dial, counter-clockwise. Empty sends nothing.
     #[serde(default)]
-    pub rotate_up: ShortcutCall,
-    /// Counter-clockwise dial turn. Empty keeps the built-in rotate.
+    pub raw_rotate_down: String,
+    /// Raw Function dial push. Empty sends nothing.
     #[serde(default)]
-    pub rotate_down: ShortcutCall,
+    pub raw_push: String,
+    /// Raw Function dial touch. Empty sends nothing.
+    #[serde(default)]
+    pub raw_touch: String,
 }
 
 fn default_cut() -> String {
@@ -337,9 +340,10 @@ impl Default for ActionParams {
             program_mode: default_program_mode(),
             active_color: String::new(),
             release: ShortcutCall::default(),
-            touch: ShortcutCall::default(),
-            rotate_up: ShortcutCall::default(),
-            rotate_down: ShortcutCall::default(),
+            raw_rotate_up: String::new(),
+            raw_rotate_down: String::new(),
+            raw_push: String::new(),
+            raw_touch: String::new(),
         }
     }
 }

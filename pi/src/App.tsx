@@ -12,6 +12,7 @@ import shortcuts from "./generated/shortcuts.json";
 
 type ShortcutEntry = { Name: string; Description: string; Parameters: string[] | null; Category?: string };
 const SHORTCUTS = shortcuts as ShortcutEntry[];
+const SHORTCUT_CATEGORIES = [...new Set(SHORTCUTS.map((item) => item.Category).filter((item): item is string => Boolean(item)))];
 
 function categoryForShortcutKind(kind: string) {
   if (!kind.startsWith("shortcut-")) return undefined;
@@ -46,9 +47,10 @@ const emptyParams = (): ActionParams => ({
   programMode: "cutDirect",
   activeColor: "",
   release: emptyCall(),
-  touch: emptyCall(),
-  rotateUp: emptyCall(),
-  rotateDown: emptyCall()
+  rawRotateUp: "",
+  rawRotateDown: "",
+  rawPush: "",
+  rawTouch: ""
 });
 
 const emptyCall = (): ShortcutCall => ({
@@ -90,7 +92,7 @@ const CONFIG_WINDOW = "vmix-config";
 const TRANSITION_BUTTONS = ["Transition1", "Transition2", "Transition3", "Transition4"];
 const STINGERS = ["Stinger1", "Stinger2", "Stinger3", "Stinger4", "Stinger5", "Stinger6", "Stinger7", "Stinger8"];
 const EFFECTS = ["Cut", "Fade", "Merge", ...TRANSITION_BUTTONS, ...STINGERS];
-const DIALS = ["volume", "replayjog", "gain", "headphones", "mixer", "rate", "replayspeed", "position"];
+const DIALS = ["volume", "replayjog", "gain", "headphones", "mixer", "rate", "replayspeed", "position", "rawdial"];
 const TOGGLES = ["overlay", "fadetoblack", "recording", "streaming", "external", "multicorder", "fullscreen", "replay", "mute", "solo", "bussend", "play", "list"];
 
 export function App() {
@@ -461,15 +463,11 @@ function ActionFields({
       </>
     );
   }
-  const dial = (
-    <DialFunctions params={params} inputs={inputs} mixes={mixes} dynamic={dynamic} onChange={onChange} />
-  );
   if (kind === "replayjog" || kind === "replayspeed") {
     return (
       <>
         <SelectField label="Channel" value={params.channel || "a"} options={["a", "b"]} onChange={(channel) => onChange({ ...params, channel })} />
         <StepField params={params} onChange={onChange} min={kind === "replayspeed" ? 0.05 : 1} max={kind === "replayspeed" ? 1 : 100} increment={kind === "replayspeed" ? 0.05 : 1} />
-        {dial}
       </>
     );
   }
@@ -478,17 +476,11 @@ function ActionFields({
       <>
         <InputField params={params} inputs={inputs} dynamic={dynamic} onChange={onChange} />
         <StepField params={params} onChange={onChange} min={0.5} max={6} increment={0.5} />
-        {dial}
       </>
     );
   }
   if (kind === "headphones") {
-    return (
-      <>
-        <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />
-        {dial}
-      </>
-    );
+    return <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />;
   }
   if (kind === "mixer") {
     return (
@@ -501,7 +493,6 @@ function ActionFields({
           <SelectField label="Bus" value={params.bus} options={["A", "B", "C", "D", "E", "F", "G", "M"]} onChange={(bus) => onChange({ ...params, bus })} />
         )}
         <StepField params={params} onChange={onChange} min={1} max={100} increment={1} />
-        {dial}
       </>
     );
   }
@@ -511,7 +502,6 @@ function ActionFields({
         <InputField params={params} inputs={inputs} dynamic={dynamic} onChange={onChange} />
         <SelectField label="Mode" value={params.rateMode} options={["rate", "slow"]} onChange={(rateMode) => onChange({ ...params, rateMode })} />
         <StepField params={params} onChange={onChange} min={0.05} max={1} increment={0.05} />
-        {dial}
       </>
     );
   }
@@ -520,7 +510,17 @@ function ActionFields({
       <>
         <InputField params={params} inputs={inputs} dynamic={dynamic} onChange={onChange} />
         <StepField params={params} onChange={onChange} min={100} max={10000} increment={100} />
-        {dial}
+      </>
+    );
+  }
+  if (kind === "rawdial") {
+    return (
+      <>
+        <TextField label="Rotate right" value={params.rawRotateUp} onChange={(rawRotateUp) => onChange({ ...params, rawRotateUp })} />
+        <TextField label="Rotate left" value={params.rawRotateDown} onChange={(rawRotateDown) => onChange({ ...params, rawRotateDown })} />
+        <TextField label="Push" value={params.rawPush} onChange={(rawPush) => onChange({ ...params, rawPush })} />
+        <TextField label="Touch" value={params.rawTouch} onChange={(rawTouch) => onChange({ ...params, rawTouch })} />
+        <p className="shortcut-note">Type Play&amp;Input=1. The FUNCTION word is added when sending. An empty field sends nothing.</p>
       </>
     );
   }
@@ -606,7 +606,6 @@ function ActionFields({
       {TOGGLES.includes(kind) && (
         <TextField label="Active color" value={params.activeColor} onChange={(activeColor) => onChange({ ...params, activeColor })} />
       )}
-      {kind === "volume" && dial}
       {!DIALS.includes(kind) && release}
     </>
   );
@@ -615,49 +614,6 @@ function ActionFields({
 function hidesDuration(effect: string) {
   const name = effect.trim();
   return TRANSITION_BUTTONS.includes(name) || STINGERS.includes(name);
-}
-
-function DialFunctions({
-  params,
-  inputs,
-  mixes,
-  dynamic,
-  onChange
-}: {
-  params: ActionParams;
-  inputs: LiveInput[];
-  mixes: number[];
-  dynamic: string[];
-  onChange: (params: ActionParams) => void;
-}) {
-  return (
-    <>
-      <ShortcutFields
-        label="On touch"
-        call={params.touch ?? emptyCall()}
-        inputs={inputs}
-        mixes={mixes}
-        dynamic={dynamic}
-        onChange={(touch) => onChange({ ...params, touch })}
-      />
-      <ShortcutFields
-        label="Rotate right"
-        call={params.rotateUp ?? emptyCall()}
-        inputs={inputs}
-        mixes={mixes}
-        dynamic={dynamic}
-        onChange={(rotateUp) => onChange({ ...params, rotateUp })}
-      />
-      <ShortcutFields
-        label="Rotate left"
-        call={params.rotateDown ?? emptyCall()}
-        inputs={inputs}
-        mixes={mixes}
-        dynamic={dynamic}
-        onChange={(rotateDown) => onChange({ ...params, rotateDown })}
-      />
-    </>
-  );
 }
 
 function showsInput(kind: string, params: ActionParams) {
@@ -744,28 +700,54 @@ function ShortcutFields({
     if (migrated) onChange(migrated);
   }, [migrated, onChange]);
   const current = migrated ?? call;
-  const entries = category ? SHORTCUTS.filter((item) => item.Category === category) : SHORTCUTS;
+  const derived = SHORTCUTS.find((item) => item.Name === current.functionName)?.Category ?? "";
+  const [chosen, setChosen] = useState("");
+  const activeCategory = category || derived || chosen;
+  const entries = activeCategory ? SHORTCUTS.filter((item) => item.Category === activeCategory) : [];
   const selected = entries.find((item) => item.Name === current.functionName);
   const parameters = selected?.Parameters ?? [];
   const missing = parameters.filter((name) => shortcutParamEmpty(name, current));
   const note = formatShortcutNote(selected?.Description ?? "");
+  const chooseCategory = (next: string) => {
+    setChosen(next);
+    if (next !== derived) onChange(emptyCall());
+  };
   return (
     <>
-      <div type="select" className="sdpi-item">
-        <div className="sdpi-item-label">{label}</div>
-        <select
-          className="sdpi-item-value select"
-          value={entries.some((item) => item.Name === current.functionName) ? current.functionName : ""}
-          onChange={(event) => onChange({ ...emptyCall(), functionName: event.target.value })}
-        >
-          <option value="">None</option>
-          {entries.map((item) => (
-            <option key={item.Name} value={item.Name}>
-              {item.Name}
-            </option>
-          ))}
-        </select>
-      </div>
+      {!category && (
+        <div type="select" className="sdpi-item">
+          <div className="sdpi-item-label">{label}</div>
+          <select className="sdpi-item-value select" value={activeCategory} onChange={(event) => chooseCategory(event.target.value)}>
+            <option value="">None</option>
+            {SHORTCUT_CATEGORIES.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {(category || activeCategory) && (
+        <div type="select" className="sdpi-item">
+          <div className="sdpi-item-label">{category ? label : "Function"}</div>
+          <select
+            className="sdpi-item-value select"
+            value={entries.some((item) => item.Name === current.functionName) ? current.functionName : ""}
+            onChange={(event) => {
+              const functionName = event.target.value;
+              if (!functionName) setChosen(activeCategory);
+              onChange({ ...emptyCall(), functionName });
+            }}
+          >
+            <option value="">None</option>
+            {entries.map((item) => (
+              <option key={item.Name} value={item.Name}>
+                {item.Name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
       {note && <p className="shortcut-note">{note}</p>}
       {parameters.map((name) => (
         <ShortcutParam

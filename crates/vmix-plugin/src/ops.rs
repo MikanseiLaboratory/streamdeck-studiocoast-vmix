@@ -41,9 +41,11 @@ pub fn event_affects(kind: ActionKind, name: &str) -> bool {
         ActionKind::Position => name == "InputPlaying",
         ActionKind::Gain | ActionKind::Mixer | ActionKind::Rate => false,
         ActionKind::MultiCorder | ActionKind::List | ActionKind::Title => false,
-        ActionKind::Transition | ActionKind::Stinger | ActionKind::Shortcut | ActionKind::Raw => {
-            false
-        }
+        ActionKind::Transition
+        | ActionKind::Stinger
+        | ActionKind::Shortcut
+        | ActionKind::Raw
+        | ActionKind::RawDial => false,
     }
 }
 
@@ -131,6 +133,7 @@ pub fn segment_for(
         | ActionKind::Title
         | ActionKind::Shortcut
         | ActionKind::Raw
+        | ActionKind::RawDial
         | ActionKind::Gain
         | ActionKind::Headphones
         | ActionKind::Mixer
@@ -205,7 +208,8 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
             return Some(Command::Function { name, query });
         }
         ActionKind::Raw => return raw_function(&params.raw),
-        ActionKind::Volume
+        ActionKind::RawDial
+        | ActionKind::Volume
         | ActionKind::ReplayJog
         | ActionKind::Gain
         | ActionKind::Headphones
@@ -380,11 +384,13 @@ pub fn rotate_commands(
     state: &VmixState,
     ticks: i32,
 ) -> Vec<Command> {
-    if ticks > 0 && !params.rotate_up.function_name.trim().is_empty() {
-        return custom_rotate_commands(&params.rotate_up, ticks);
-    }
-    if ticks < 0 && !params.rotate_down.function_name.trim().is_empty() {
-        return custom_rotate_commands(&params.rotate_down, ticks);
+    if kind == ActionKind::RawDial {
+        let raw = if ticks > 0 {
+            params.raw_rotate_up.as_str()
+        } else {
+            params.raw_rotate_down.as_str()
+        };
+        return raw_rotate_commands(raw, ticks);
     }
     rotate_command(kind, params, state, ticks)
         .into_iter()
@@ -392,10 +398,10 @@ pub fn rotate_commands(
 }
 
 pub fn touch_command(kind: ActionKind, params: &ActionParams) -> Option<Command> {
-    if params.touch.function_name.trim().is_empty() {
-        press_command(kind, params)
+    if kind == ActionKind::RawDial {
+        raw_function(&params.raw_touch)
     } else {
-        command_from_call(&params.touch, None)
+        press_command(kind, params)
     }
 }
 
@@ -407,26 +413,59 @@ pub fn release_command(call: &ShortcutCall) -> Option<Command> {
     }
 }
 
-fn custom_rotate_commands(call: &ShortcutCall, ticks: i32) -> Vec<Command> {
-    let name = call.function_name.trim();
-    if name.is_empty() || ticks == 0 {
+fn raw_rotate_commands(raw: &str, ticks: i32) -> Vec<Command> {
+    if ticks == 0 {
         return Vec::new();
     }
-    if shortcut_takes_value(name) {
-        let override_value = if call.value.trim().is_empty() {
-            Some(ticks.to_string())
-        } else {
-            None
-        };
-        return command_from_call(call, override_value.as_deref())
-            .into_iter()
-            .collect();
-    }
-    let Some(command) = command_from_call(call, None) else {
+    let Some(Command::Function { name, query }) = raw_function(raw) else {
         return Vec::new();
     };
-    let times = ticks.unsigned_abs().max(1) as usize;
-    vec![command; times]
+    if shortcut_takes_value(&name) && !query_has_value(query.as_deref()) {
+        return vec![Command::Function {
+            name,
+            query: Some(with_tick_value(query, ticks)),
+        }];
+    }
+    if shortcut_takes_value(&name) {
+        return vec![Command::Function { name, query }];
+    }
+    let times = ticks.unsigned_abs() as usize;
+    (0..times)
+        .map(|_| Command::Function {
+            name: name.clone(),
+            query: query.clone(),
+        })
+        .collect()
+}
+
+fn query_has_value(query: Option<&str>) -> bool {
+    query.is_some_and(|query| {
+        query.split('&').any(|piece| {
+            piece.split_once('=').is_some_and(|(key, value)| {
+                key.eq_ignore_ascii_case("value") && !value.trim().is_empty()
+            })
+        })
+    })
+}
+
+fn with_tick_value(query: Option<String>, ticks: i32) -> String {
+    let value = format!("Value={ticks}");
+    let kept = query
+        .unwrap_or_default()
+        .split('&')
+        .filter(|piece| !piece.is_empty())
+        .filter(|piece| {
+            !piece.split_once('=').is_some_and(|(key, value)| {
+                key.eq_ignore_ascii_case("value") && value.trim().is_empty()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    if kept.is_empty() {
+        value
+    } else {
+        format!("{kept}&{value}")
+    }
 }
 
 fn shortcut_takes_value(name: &str) -> bool {
@@ -512,6 +551,7 @@ pub fn press_command(kind: ActionKind, params: &ActionParams) -> Option<Command>
         ActionKind::Rate => Some(rate_command(params, 1.0)),
         ActionKind::Headphones => Some(headphones_command(params, 100)),
         ActionKind::Mixer => Some(mixer_command(params, 100)),
+        ActionKind::RawDial => raw_function(&params.raw_push),
         _ => None,
     }
 }
@@ -1541,18 +1581,34 @@ mod tests {
         assert_eq!(query.as_deref(), Some("Channel=A"));
         assert!(release_command(&ShortcutCall::default()).is_none());
 
-        let mut params = ActionParams::default();
-        params.rotate_up.function_name = "ReplaySelectNextEvent".into();
-        params.rotate_down.function_name = "ReplayChangeSpeed".into();
-        let up = rotate_commands(ActionKind::ReplayJog, &params, &loaded(), 3);
+        let params = ActionParams {
+            raw_rotate_up: "ReplaySelectNextEvent".into(),
+            raw_rotate_down: "ReplayChangeSpeed&Channel=A".into(),
+            raw_push: "FUNCTION ReplayPlay".into(),
+            raw_touch: "ReplayJumpToSelectedInPoint&Channel=A".into(),
+            ..ActionParams::default()
+        };
+        let up = rotate_commands(ActionKind::RawDial, &params, &loaded(), 3);
         assert_eq!(up.len(), 3);
-        let down = rotate_commands(ActionKind::ReplayJog, &params, &loaded(), -2);
+        let down = rotate_commands(ActionKind::RawDial, &params, &loaded(), -2);
         assert_eq!(down.len(), 1);
         let Command::Function { name, query } = &down[0] else {
             panic!("function");
         };
         assert_eq!(name, "ReplayChangeSpeed");
-        assert_eq!(query.as_deref(), Some("Value=-2"));
+        assert_eq!(query.as_deref(), Some("Channel=A&Value=-2"));
+        let Command::Function { name, .. } = press_command(ActionKind::RawDial, &params).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayPlay");
+        let Command::Function { name, query } = touch_command(ActionKind::RawDial, &params).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayJumpToSelectedInPoint");
+        assert_eq!(query.as_deref(), Some("Channel=A"));
+        assert!(rotate_commands(ActionKind::ReplayJog, &params, &loaded(), 3).len() == 1);
     }
 
     #[test]

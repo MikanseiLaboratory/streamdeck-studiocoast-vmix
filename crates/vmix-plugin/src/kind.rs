@@ -20,6 +20,7 @@ pub enum ActionKind {
     Title,
     Shortcut,
     Raw,
+    RawDial,
     Volume,
     ReplayJog,
     Gain,
@@ -39,6 +40,7 @@ impl ActionKind {
                 | Self::Title
                 | Self::Shortcut
                 | Self::Raw
+                | Self::RawDial
                 | Self::Volume
                 | Self::ReplayJog
                 | Self::Gain
@@ -60,7 +62,8 @@ impl ActionKind {
     pub fn is_dial(self) -> bool {
         matches!(
             self,
-            Self::Volume
+            Self::RawDial
+                | Self::Volume
                 | Self::ReplayJog
                 | Self::Gain
                 | Self::Headphones
