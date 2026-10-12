@@ -805,7 +805,7 @@ dependencies = [
 
 [[package]]
 name = "vmix-plugin"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "vmix-pool"
-version = "0.1.2"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
