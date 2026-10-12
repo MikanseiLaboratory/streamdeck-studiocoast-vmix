@@ -10,7 +10,7 @@ useInputNumber: boolean,
 /**
  * `0` is Main. `2`..=`16` are Mix 2 through Mix 16.
  */
-mix: number, effect: string, durationMs: string, overlay: number, overlayMode: string, stinger: number, replayAction: string, channel: string, audioTarget: string, bus: string, listAction: string, index: string, titleAction: string, value: string, selectedName: string, functionName: string, extra: string, raw: string, step: number, 
+mix: number, effect: string, durationMs: string, overlay: number, overlayMode: string, replayAction: string, channel: string, audioTarget: string, bus: string, listAction: string, index: string, titleAction: string, value: string, selectedName: string, functionName: string, extra: string, raw: string, step: number, 
 /**
  * `rate` is SetRate (0.1–4). `slow` is SetRateSlowMotion (0–1).
  */
@@ -18,7 +18,45 @@ rateMode: string,
 /**
  * `bus` is SetVolumeBusMixer*. `channel` is SetVolumeChannelMixer*.
  */
-mixerMode: string, };
+mixerMode: string, 
+/**
+ * `cutDirect`, `cut`, or `activeInput`. Non-main mixes never send CutDirect.
+ */
+programMode: string, 
+/**
+ * Mode for a direct action, such as Loop, Playlist, PTZ, or Browser.
+ */
+commandMode: string, 
+/**
+ * Bar color while the key is active. Empty keeps the instance color.
+ */
+activeColor: string, 
+/**
+ * Sent on key up. An empty function name sends nothing.
+ */
+release: ShortcutCall, 
+/**
+ * Raw Function dial, clockwise. Empty sends nothing. Same line as `raw`.
+ */
+rawRotateUp: string, 
+/**
+ * Raw Function dial, counter-clockwise. Empty sends nothing.
+ */
+rawRotateDown: string, 
+/**
+ * Raw Function dial push. Empty sends nothing.
+ */
+rawPush: string, 
+/**
+ * Raw Function dial touch. Empty sends nothing.
+ */
+rawTouch: string, 
+/**
+ * Raw Function key release. Empty sends nothing. Same line as `raw`.
+ */
+rawRelease: string, };
+
+export type ShortcutCall = { functionName: string, input: string, value: string, channel: string, mix: number, durationMs: string, selectedName: string, extra: string, };
 
 export type AdvancedSettings = { longPress: boolean, longPressMs: number, };
 

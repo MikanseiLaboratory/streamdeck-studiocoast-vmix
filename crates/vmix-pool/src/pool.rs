@@ -273,10 +273,12 @@ impl Inner {
     }
 
     fn set_status(&self, id: &str, status: ConnectionStatus) {
-        self.statuses
-            .lock()
-            .expect("statuses")
-            .insert(id.to_string(), status);
+        let mut statuses = self.statuses.lock().expect("statuses");
+        if statuses.get(id) == Some(&status) {
+            return;
+        }
+        statuses.insert(id.to_string(), status);
+        drop(statuses);
         self.publish_status(id);
     }
 
@@ -546,9 +548,11 @@ fn handle_message(inner: &Inner, id: &str, message: RecvCommand) {
         RecvCommand::XML(response) => {
             let mut states = inner.states.lock().expect("states");
             let state = states.entry(id.to_string()).or_default();
+            let before = cache::display_fingerprint(state);
             if let Err(error) = cache::apply_xml(state, &response.body) {
                 tracing::warn!(%id, %error, "vmix xml parse failed");
             }
+            let changed = cache::display_fingerprint(state) != before;
             let edition = state.edition.clone();
             let version = state.version.clone();
             drop(states);
@@ -561,9 +565,11 @@ fn handle_message(inner: &Inner, id: &str, message: RecvCommand) {
                     },
                 );
             }
-            let _ = inner
-                .events
-                .send(PoolEvent::Snapshot { id: id.to_string() });
+            if changed {
+                let _ = inner
+                    .events
+                    .send(PoolEvent::Snapshot { id: id.to_string() });
+            }
         }
         RecvCommand::FUNCTION(response) => {
             let ok = matches!(response.status, Status::OK);

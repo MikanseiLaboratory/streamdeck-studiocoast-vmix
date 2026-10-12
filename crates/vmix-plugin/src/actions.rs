@@ -51,6 +51,15 @@ macro_rules! vmix_key {
                 Ok(())
             }
 
+            async fn on_key_up(
+                &mut self,
+                _payload: &ActionPayload,
+                ctx: &ActionContext<'_, Self::Settings, Self::State>,
+            ) -> Result<()> {
+                ctx.state().release(&ctx.identity().context);
+                Ok(())
+            }
+
             async fn on_property_inspector_did_appear(
                 &mut self,
                 ctx: &ActionContext<'_, Self::Settings, Self::State>,
@@ -111,11 +120,6 @@ vmix_key!(
     TransitionAction,
     "dev.mikanseilaboratory.vmix.transition",
     ActionKind::Transition
-);
-vmix_key!(
-    StingerAction,
-    "dev.mikanseilaboratory.vmix.stinger",
-    ActionKind::Stinger
 );
 vmix_key!(
     FadeToBlackAction,
@@ -186,6 +190,74 @@ vmix_key!(
     TitleAction,
     "dev.mikanseilaboratory.vmix.title",
     ActionKind::Title
+);
+vmix_key!(LoopAction, "dev.mikanseilaboratory.vmix.loop", ActionKind::Loop);
+vmix_key!(
+    PlaylistAction,
+    "dev.mikanseilaboratory.vmix.playlist",
+    ActionKind::Playlist
+);
+vmix_key!(
+    RestartAction,
+    "dev.mikanseilaboratory.vmix.restart",
+    ActionKind::Restart
+);
+vmix_key!(
+    QuickPlayAction,
+    "dev.mikanseilaboratory.vmix.quickplay",
+    ActionKind::QuickPlay
+);
+vmix_key!(
+    SnapshotAction,
+    "dev.mikanseilaboratory.vmix.snapshot",
+    ActionKind::Snapshot
+);
+vmix_key!(GoAction, "dev.mikanseilaboratory.vmix.go", ActionKind::Go);
+vmix_key!(
+    CountdownAction,
+    "dev.mikanseilaboratory.vmix.countdown",
+    ActionKind::Countdown
+);
+vmix_key!(
+    BrowserAction,
+    "dev.mikanseilaboratory.vmix.browser",
+    ActionKind::Browser
+);
+vmix_key!(
+    ScriptAction,
+    "dev.mikanseilaboratory.vmix.script",
+    ActionKind::Script
+);
+vmix_key!(
+    PresetAction,
+    "dev.mikanseilaboratory.vmix.preset",
+    ActionKind::Preset
+);
+vmix_key!(
+    PreviewStepAction,
+    "dev.mikanseilaboratory.vmix.previewstep",
+    ActionKind::PreviewStep
+);
+vmix_key!(PtzAction, "dev.mikanseilaboratory.vmix.ptz", ActionKind::Ptz);
+vmix_key!(
+    ReplayCameraAction,
+    "dev.mikanseilaboratory.vmix.replaycamera",
+    ActionKind::ReplayCamera
+);
+vmix_key!(
+    AudioAutoAction,
+    "dev.mikanseilaboratory.vmix.audioauto",
+    ActionKind::AudioAuto
+);
+vmix_key!(
+    SoloAllOffAction,
+    "dev.mikanseilaboratory.vmix.soloalloff",
+    ActionKind::SoloAllOff
+);
+vmix_key!(
+    DataSourceAction,
+    "dev.mikanseilaboratory.vmix.datasource",
+    ActionKind::DataSource
 );
 vmix_key!(
     ShortcutAction,
@@ -420,6 +492,12 @@ fn trigger_for(kind: ActionKind) -> TriggerDescription {
             touch: Some("Play / Pause".into()),
             long_touch: None,
         },
+        ActionKind::RawDial => TriggerDescription {
+            rotate: Some("Function".into()),
+            push: Some("Function".into()),
+            touch: Some("Function".into()),
+            long_touch: None,
+        },
         _ => TriggerDescription::default(),
     }
 }
@@ -464,13 +542,17 @@ vmix_dial!(
     "dev.mikanseilaboratory.vmix.position",
     ActionKind::Position
 );
+vmix_dial!(
+    RawDial,
+    "dev.mikanseilaboratory.vmix.rawdial",
+    ActionKind::RawDial
+);
 
 pub fn force_link() {
     let _ = (
         std::any::TypeId::of::<ProgramAction>(),
         std::any::TypeId::of::<PreviewAction>(),
         std::any::TypeId::of::<TransitionAction>(),
-        std::any::TypeId::of::<StingerAction>(),
         std::any::TypeId::of::<FadeToBlackAction>(),
         std::any::TypeId::of::<OverlayAction>(),
         std::any::TypeId::of::<RecordingAction>(),
@@ -485,6 +567,22 @@ pub fn force_link() {
         std::any::TypeId::of::<PlayAction>(),
         std::any::TypeId::of::<ListAction>(),
         std::any::TypeId::of::<TitleAction>(),
+        std::any::TypeId::of::<LoopAction>(),
+        std::any::TypeId::of::<PlaylistAction>(),
+        std::any::TypeId::of::<RestartAction>(),
+        std::any::TypeId::of::<QuickPlayAction>(),
+        std::any::TypeId::of::<SnapshotAction>(),
+        std::any::TypeId::of::<GoAction>(),
+        std::any::TypeId::of::<CountdownAction>(),
+        std::any::TypeId::of::<BrowserAction>(),
+        std::any::TypeId::of::<ScriptAction>(),
+        std::any::TypeId::of::<PresetAction>(),
+        std::any::TypeId::of::<PreviewStepAction>(),
+        std::any::TypeId::of::<PtzAction>(),
+        std::any::TypeId::of::<ReplayCameraAction>(),
+        std::any::TypeId::of::<AudioAutoAction>(),
+        std::any::TypeId::of::<SoloAllOffAction>(),
+        std::any::TypeId::of::<DataSourceAction>(),
         std::any::TypeId::of::<ShortcutAction>(),
         std::any::TypeId::of::<GeneralShortcutAction>(),
         std::any::TypeId::of::<AudioShortcutAction>(),
@@ -511,5 +609,6 @@ pub fn force_link() {
         std::any::TypeId::of::<RateDial>(),
         std::any::TypeId::of::<ReplaySpeedDial>(),
         std::any::TypeId::of::<PositionDial>(),
+        std::any::TypeId::of::<RawDial>(),
     );
 }

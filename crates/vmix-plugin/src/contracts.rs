@@ -133,6 +133,29 @@ fn default_fg() -> String {
     "#f4f7fb".into()
 }
 
+/// One vMix shortcut chosen in the property inspector.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutCall {
+    #[serde(default)]
+    pub function_name: String,
+    #[serde(default)]
+    pub input: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub channel: String,
+    #[serde(default)]
+    pub mix: u8,
+    #[serde(default)]
+    pub duration_ms: String,
+    #[serde(default)]
+    pub selected_name: String,
+    #[serde(default)]
+    pub extra: String,
+}
+
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
@@ -194,8 +217,6 @@ pub struct ActionParams {
     pub overlay: u8,
     #[serde(default = "default_toggle")]
     pub overlay_mode: String,
-    #[serde(default = "default_one")]
-    pub stinger: u8,
     #[serde(default = "default_play")]
     pub replay_action: String,
     #[serde(default)]
@@ -228,6 +249,33 @@ pub struct ActionParams {
     /// `bus` is SetVolumeBusMixer*. `channel` is SetVolumeChannelMixer*.
     #[serde(default = "default_mixer_mode")]
     pub mixer_mode: String,
+    /// `cutDirect`, `cut`, or `activeInput`. Non-main mixes never send CutDirect.
+    #[serde(default = "default_program_mode")]
+    pub program_mode: String,
+    /// Mode for a direct action, such as Loop, Playlist, PTZ, or Browser.
+    #[serde(default)]
+    pub command_mode: String,
+    /// Bar color while the key is active. Empty keeps the instance color.
+    #[serde(default)]
+    pub active_color: String,
+    /// Sent on key up. An empty function name sends nothing.
+    #[serde(default)]
+    pub release: ShortcutCall,
+    /// Raw Function dial, clockwise. Empty sends nothing. Same line as `raw`.
+    #[serde(default)]
+    pub raw_rotate_up: String,
+    /// Raw Function dial, counter-clockwise. Empty sends nothing.
+    #[serde(default)]
+    pub raw_rotate_down: String,
+    /// Raw Function dial push. Empty sends nothing.
+    #[serde(default)]
+    pub raw_push: String,
+    /// Raw Function dial touch. Empty sends nothing.
+    #[serde(default)]
+    pub raw_touch: String,
+    /// Raw Function key release. Empty sends nothing. Same line as `raw`.
+    #[serde(default)]
+    pub raw_release: String,
 }
 
 fn default_cut() -> String {
@@ -263,6 +311,9 @@ fn default_rate_mode() -> String {
 fn default_mixer_mode() -> String {
     "bus".into()
 }
+fn default_program_mode() -> String {
+    "cutDirect".into()
+}
 
 impl Default for ActionParams {
     fn default() -> Self {
@@ -274,7 +325,6 @@ impl Default for ActionParams {
             duration_ms: String::new(),
             overlay: 1,
             overlay_mode: default_toggle(),
-            stinger: 1,
             replay_action: default_play(),
             channel: String::new(),
             audio_target: default_input_target(),
@@ -290,6 +340,15 @@ impl Default for ActionParams {
             step: default_step(),
             rate_mode: default_rate_mode(),
             mixer_mode: default_mixer_mode(),
+            command_mode: String::new(),
+            program_mode: default_program_mode(),
+            active_color: String::new(),
+            release: ShortcutCall::default(),
+            raw_rotate_up: String::new(),
+            raw_rotate_down: String::new(),
+            raw_push: String::new(),
+            raw_touch: String::new(),
+            raw_release: String::new(),
         }
     }
 }
@@ -324,5 +383,6 @@ export_ts!(TargetSelector);
 export_ts!(GlobalSettings);
 export_ts!(CommonSettings);
 export_ts!(AdvancedSettings);
+export_ts!(ShortcutCall);
 export_ts!(ActionParams);
 export_ts!(ActionSettings);

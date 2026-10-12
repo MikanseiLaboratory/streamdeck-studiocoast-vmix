@@ -18,9 +18,10 @@
   vertical-align: middle;
 }
 
-.caution {
-  color: #e2b15a;
+.shortcut-note {
+  color: #c5ccd6;
   font-size: 9pt;
   line-height: 1.4;
   margin: 0 16px 8px 103px;
+  white-space: pre-line;
 }

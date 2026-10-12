@@ -82,6 +82,45 @@ pub fn key_image(kind: ActionKind, segments: &[Segment], foreground: &str) -> St
     )
 }
 
+pub fn bar_color(kind: ActionKind, active_color: &str, state: SegmentState, instance: &str) -> String {
+    if state != SegmentState::Active {
+        return instance.to_string();
+    }
+    match kind {
+        ActionKind::Program => "#e23b3b".into(),
+        ActionKind::Preview => "#3cbe6c".into(),
+        _ => {
+            let custom = active_color.trim();
+            if custom.is_empty() {
+                instance.to_string()
+            } else {
+                custom.to_string()
+            }
+        }
+    }
+}
+
+pub fn key_face_token(segments: &[Segment], title: &str, foreground: &str) -> String {
+    let mut token = String::from(foreground);
+    token.push('|');
+    token.push_str(title);
+    for segment in segments {
+        token.push('|');
+        token.push_str(&segment.label);
+        token.push(':');
+        token.push_str(&segment.color);
+        token.push(':');
+        token.push_str(match segment.state {
+            SegmentState::Active => "a",
+            SegmentState::Inactive => "i",
+            SegmentState::Intermediate => "m",
+            SegmentState::Neutral => "n",
+            SegmentState::Unavailable => "u",
+        });
+    }
+    token
+}
+
 fn fill_for(segment: &Segment) -> String {
     match segment.state {
         SegmentState::Active | SegmentState::Neutral => segment.color.clone(),
@@ -112,7 +151,6 @@ fn icon_path(kind: ActionKind) -> &'static str {
             r#"<rect x="8" y="16" width="48" height="32" rx="4"/><path d="M20 32h24"/>"#
         }
         ActionKind::Transition => r#"<path d="M12 40h40M32 16v24"/>"#,
-        ActionKind::Stinger => r#"<path d="M16 40l16-24 16 24"/>"#,
         ActionKind::FadeToBlack => r#"<rect x="12" y="16" width="40" height="32"/>"#,
         ActionKind::Overlay => {
             r#"<rect x="8" y="20" width="28" height="20"/><rect x="28" y="12" width="28" height="20"/>"#
@@ -131,8 +169,32 @@ fn icon_path(kind: ActionKind) -> &'static str {
         ActionKind::Play => r#"<path d="M20 16l28 16-28 16z"/>"#,
         ActionKind::List => r#"<path d="M16 18h32M16 32h32M16 46h32"/>"#,
         ActionKind::Title => r#"<path d="M12 20h40M20 20v24M44 20v24"/>"#,
+        ActionKind::Loop => r#"<path d="M20 32a12 12 0 1 0 4-8M20 18v8h8"/>"#,
+        ActionKind::Playlist => r#"<path d="M16 18h32M16 32h32M16 46h20"/>"#,
+        ActionKind::Restart => r#"<path d="M16 18h8v28l20-14zM48 16v32"/>"#,
+        ActionKind::QuickPlay => r#"<path d="M14 32h22M28 20l12 12-12 12"/>"#,
+        ActionKind::Snapshot => {
+            r#"<rect x="12" y="20" width="40" height="28" rx="4"/><circle cx="32" cy="34" r="8"/>"#
+        }
+        ActionKind::Go => r#"<path d="M18 16h18l10 16-10 16H18"/>"#,
+        ActionKind::Countdown => r#"<circle cx="32" cy="32" r="16"/><path d="M32 22v12l8 6"/>"#,
+        ActionKind::Browser => {
+            r#"<circle cx="32" cy="32" r="16"/><path d="M16 32h32M32 16c6 6 6 26 0 32M32 16c-6 6-6 26 0 32"/>"#
+        }
+        ActionKind::Script => r#"<path d="M18 18h28M18 32h20M18 46h24"/>"#,
+        ActionKind::Preset => r#"<path d="M12 24h16l6 6h18v20H12z"/>"#,
+        ActionKind::PreviewStep => {
+            r#"<rect x="8" y="18" width="36" height="28" rx="4"/><path d="M48 24l8 8-8 8"/>"#
+        }
+        ActionKind::Ptz => r#"<path d="M32 12v40M12 32h40"/>"#,
+        ActionKind::ReplayCamera => r#"<path d="M16 32a16 16 0 1 0 4-10M16 14v10h10M46 20v24"/>"#,
+        ActionKind::AudioAuto => r#"<path d="M16 24h10l14-10v36L26 40H16zM46 22v20"/>"#,
+        ActionKind::SoloAllOff => r#"<circle cx="32" cy="32" r="14"/><path d="M20 44l24-24"/>"#,
+        ActionKind::DataSource => r#"<path d="M16 20h32v8H16zM16 32h32v8H16zM16 44h20"/>"#,
         ActionKind::Shortcut => r#"<path d="M16 40l12-24h8l12 24M22 32h20"/>"#,
-        ActionKind::Raw => r#"<path d="M20 16l-10 16 10 16M44 16l10 16-10 16"/>"#,
+        ActionKind::Raw | ActionKind::RawDial => {
+            r#"<path d="M20 16l-10 16 10 16M44 16l10 16-10 16"/>"#
+        }
         ActionKind::Volume => r#"<path d="M12 26h8l12-10v36L20 42h-8zM40 24a12 12 0 0 1 0 16"/>"#,
         ActionKind::ReplayJog => {
             r#"<path d="M16 32a16 16 0 1 0 4-10M16 14v10h10M10 52h12M42 52h12"/>"#
@@ -214,8 +276,9 @@ fn value_label(kind: ActionKind, level: Option<f32>, caption: Option<&str>) -> S
             }
         }
         ActionKind::Gain => format!("{:.1} dB", level.clamp(0.0, 1.0) * 24.0),
-        ActionKind::Rate | ActionKind::ReplaySpeed => {
-            format!("{:.2}x", level.clamp(0.0, 1.0) * 4.0)
+        ActionKind::Rate => format!("{:.2}x", level.clamp(0.0, 1.0) * 4.0),
+        ActionKind::ReplaySpeed => {
+            format!("{}%", (level.clamp(0.0, 1.0) * 400.0).round() as i32)
         }
         ActionKind::Position => format!("{}%", (level.clamp(0.0, 1.0) * 100.0).round() as u8),
         _ => String::new(),
@@ -234,6 +297,7 @@ fn dial_title(kind: ActionKind, segment: Option<&Segment>) -> String {
         ActionKind::Rate => "Rate".into(),
         ActionKind::ReplaySpeed => "Speed".into(),
         ActionKind::Position => "Pos".into(),
+        ActionKind::RawDial => "Raw".into(),
         _ => String::new(),
     }
 }
@@ -319,6 +383,44 @@ mod tests {
     use super::*;
 
     #[test]
+    fn active_program_and_preview_ignore_the_instance_color() {
+        assert_eq!(
+            bar_color(ActionKind::Program, "", SegmentState::Active, "#4c8dff"),
+            "#e23b3b"
+        );
+        assert_eq!(
+            bar_color(ActionKind::Preview, "", SegmentState::Active, "#4c8dff"),
+            "#3cbe6c"
+        );
+        assert_eq!(
+            bar_color(ActionKind::Play, "#ff00aa", SegmentState::Active, "#4c8dff"),
+            "#ff00aa"
+        );
+        assert_eq!(
+            bar_color(ActionKind::Play, "", SegmentState::Active, "#4c8dff"),
+            "#4c8dff"
+        );
+        assert_eq!(
+            bar_color(ActionKind::Program, "", SegmentState::Inactive, "#4c8dff"),
+            "#4c8dff"
+        );
+    }
+
+    #[test]
+    fn unchanged_key_face_matches_only_the_same_drawing() {
+        let segment = Segment {
+            label: "Local".into(),
+            color: "#e23b3b".into(),
+            state: SegmentState::Active,
+        };
+        let first = key_face_token(std::slice::from_ref(&segment), "1", "#f4f7fb");
+        let again = key_face_token(std::slice::from_ref(&segment), "1", "#f4f7fb");
+        assert_eq!(first, again);
+        let other = key_face_token(std::slice::from_ref(&segment), "2", "#f4f7fb");
+        assert_ne!(first, other);
+    }
+
+    #[test]
     fn hardware_state_is_on_only_when_every_segment_is_active() {
         assert_eq!(
             hardware_state([SegmentState::Active, SegmentState::Active]),
@@ -347,6 +449,8 @@ mod tests {
         assert_eq!(layout, LAYOUT_B1);
         assert_eq!(payload["title"], "Local");
         assert_eq!(payload["value"], "53%");
+        let (_, speed) = dial_feedback(ActionKind::ReplaySpeed, &[], &[Some(0.25)], &[], "#f4f7fb");
+        assert_eq!(speed["value"], "100%");
         assert_eq!(payload["indicator"]["value"], 53);
         assert_eq!(payload["indicator"]["enabled"], true);
         assert_eq!(payload["indicator"]["bar_fill_c"], "#4c8dff");
