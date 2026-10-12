@@ -5,7 +5,6 @@
   "dev.mikanseilaboratory.vmix.program": { "Name": "Program", "Tooltip": "Switch the program input." },
   "dev.mikanseilaboratory.vmix.preview": { "Name": "Preview", "Tooltip": "Switch the preview input." },
   "dev.mikanseilaboratory.vmix.transition": { "Name": "Transition", "Tooltip": "Run Cut, Fade, Stinger 1-8, or a named effect." },
-  "dev.mikanseilaboratory.vmix.stinger": { "Name": "Stinger", "Tooltip": "Run stinger 1 through 8." },
   "dev.mikanseilaboratory.vmix.fadetoblack": { "Name": "Fade to Black", "Tooltip": "Toggle fade to black." },
   "dev.mikanseilaboratory.vmix.overlay": { "Name": "Overlay", "Tooltip": "Control overlay 1 through 8." },
   "dev.mikanseilaboratory.vmix.recording": { "Name": "Recording", "Tooltip": "Toggle recording." },

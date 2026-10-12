@@ -3,7 +3,6 @@ pub enum ActionKind {
     Program,
     Preview,
     Transition,
-    Stinger,
     FadeToBlack,
     Overlay,
     Recording,
@@ -52,7 +51,6 @@ impl ActionKind {
         !matches!(
             self,
             Self::Transition
-                | Self::Stinger
                 | Self::Title
                 | Self::Restart
                 | Self::QuickPlay
@@ -86,7 +84,6 @@ impl ActionKind {
         matches!(
             self,
             Self::Transition
-                | Self::Stinger
                 | Self::Title
                 | Self::Restart
                 | Self::QuickPlay

@@ -28,7 +28,6 @@ const emptyParams = (): ActionParams => ({
   durationMs: "",
   overlay: 1,
   overlayMode: "toggle",
-  stinger: 1,
   replayAction: "play",
   channel: "",
   audioTarget: "input",
@@ -498,7 +497,7 @@ function ActionFields({
   if (kind === "replayjog" || kind === "replayspeed") {
     return (
       <>
-        <SelectField label="Channel" value={params.channel || "a"} options={["a", "b"]} onChange={(channel) => onChange({ ...params, channel })} />
+        <ReplayChannelField params={params} onChange={onChange} />
         <StepField params={params} onChange={onChange} min={kind === "replayspeed" ? 0.05 : 1} max={kind === "replayspeed" ? 1 : 100} increment={kind === "replayspeed" ? 0.05 : 1} />
       </>
     );
@@ -567,9 +566,9 @@ function ActionFields({
   }
   return (
     <>
-      {(kind === "program" || kind === "preview" || kind === "play" || kind === "transition" || kind === "stinger" || kind === "overlay" || kind === "list" || kind === "title") &&
+      {(kind === "program" || kind === "preview" || kind === "play" || kind === "transition" || kind === "overlay" || kind === "list" || kind === "title") &&
         showsInput(kind, params) && <InputField params={params} inputs={inputs} dynamic={dynamic} onChange={onChange} />}
-      {(kind === "program" || kind === "preview" || kind === "transition" || kind === "stinger" || kind === "overlay") && showsMix(kind, params) && (
+      {(kind === "program" || kind === "preview" || kind === "transition" || kind === "overlay") && showsMix(kind, params) && (
         <MixField
           value={params.mix}
           mixes={mixes}
@@ -599,7 +598,6 @@ function ActionFields({
           )}
         </>
       )}
-      {kind === "stinger" && <NumberSelect label="Stinger" value={params.stinger} max={8} onChange={(stinger) => onChange({ ...params, stinger })} />}
       {kind === "overlay" && (
         <>
           <NumberSelect label="Overlay" value={params.overlay} max={8} onChange={(overlay) => onChange({ ...params, overlay })} />
@@ -621,7 +619,7 @@ function ActionFields({
             onChange={(replayAction) => onChange({ ...params, replayAction })}
           />
           {params.replayAction !== "startstop" && (
-            <SelectField label="Channel" value={params.channel || "a"} options={["a", "b"]} onChange={(channel) => onChange({ ...params, channel })} />
+            <ReplayChannelField params={params} onChange={onChange} />
           )}
         </>
       )}
@@ -1302,6 +1300,19 @@ function SelectField({
       </select>
     </div>
   );
+}
+
+function ReplayChannelField({ params, onChange }: { params: ActionParams; onChange: (params: ActionParams) => void }) {
+  const paramsRef = useRef(params);
+  const onChangeRef = useRef(onChange);
+  paramsRef.current = params;
+  onChangeRef.current = onChange;
+  useEffect(() => {
+    if (params.channel.trim()) return;
+    onChangeRef.current({ ...paramsRef.current, channel: "a" });
+  }, [params.channel]);
+  const shown = params.channel.trim().toLowerCase() === "b" ? "b" : "a";
+  return <SelectField label="Channel" value={shown} options={["a", "b"]} labels={["A", "B"]} onChange={(channel) => onChange({ ...params, channel })} />;
 }
 
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {

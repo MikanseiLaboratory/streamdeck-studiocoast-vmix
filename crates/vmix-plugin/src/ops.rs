@@ -42,7 +42,6 @@ pub fn event_affects(kind: ActionKind, name: &str) -> bool {
         ActionKind::Gain | ActionKind::Mixer | ActionKind::Rate => false,
         ActionKind::MultiCorder | ActionKind::List | ActionKind::Title => false,
         ActionKind::Transition
-        | ActionKind::Stinger
         | ActionKind::Shortcut
         | ActionKind::Raw
         | ActionKind::RawDial
@@ -153,7 +152,6 @@ pub fn segment_for(
             None => SegmentState::Inactive,
         },
         ActionKind::Transition
-        | ActionKind::Stinger
         | ActionKind::Title
         | ActionKind::Shortcut
         | ActionKind::Raw
@@ -229,7 +227,6 @@ pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> 
             .map(|number| number.to_string())
             .unwrap_or_else(|| params.input.clone()),
         ActionKind::Overlay => format!("OL{}", params.overlay.clamp(1, 8)),
-        ActionKind::Stinger => format!("ST{}", params.stinger.clamp(1, 8)),
         ActionKind::List => aimed(state, params)
             .and_then(|input| {
                 state
@@ -248,7 +245,6 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
         ActionKind::Program => program_function(params),
         ActionKind::Preview => "PreviewInput".to_string(),
         ActionKind::Transition => transition_function(params),
-        ActionKind::Stinger => format!("Stinger{}", params.stinger.clamp(1, 8)),
         ActionKind::FadeToBlack => "FadeToBlack".into(),
         ActionKind::Overlay => overlay_function(params),
         ActionKind::Recording => "StartStopRecording".into(),
@@ -336,27 +332,22 @@ pub fn jog_command(params: &ActionParams, ticks: i32) -> Command {
     let step = if params.step <= 0.0 { 1.0 } else { params.step };
     let frames = (ticks as f32 * step).round() as i32;
     let value = frames.to_string();
+    let channel = replay_channel(params);
     Command::Function {
         name: "ReplayJumpFrames".into(),
         query: Some(join_query(&[
             ("Value", value.as_str()),
-            ("Channel", params.channel.trim()),
+            ("Channel", channel.as_str()),
         ]))
         .filter(|query| !query.is_empty()),
     }
 }
 
 pub fn jog_press_command(params: &ActionParams) -> Command {
+    let channel = replay_channel(params);
     Command::Function {
         name: "ReplayPlayPause".into(),
-        query: {
-            let channel = params.channel.trim();
-            if channel.is_empty() {
-                None
-            } else {
-                Some(format!("Channel={channel}"))
-            }
-        },
+        query: Some(format!("Channel={channel}")),
     }
 }
 
@@ -825,7 +816,7 @@ pub fn rate_command(params: &ActionParams, rate: f32) -> Command {
 
 pub fn replay_speed_command(params: &ActionParams, speed: f32) -> Command {
     let value = format_number(speed);
-    let channel = replay_speed_channel(params);
+    let channel = replay_channel(params);
     Command::Function {
         name: "ReplayChangeSpeed".into(),
         query: Some(join_query(&[
@@ -836,7 +827,7 @@ pub fn replay_speed_command(params: &ActionParams, speed: f32) -> Command {
     }
 }
 
-fn replay_speed_channel(params: &ActionParams) -> String {
+fn replay_channel(params: &ActionParams) -> String {
     let channel = params.channel.trim();
     if channel.is_empty() {
         "A".into()
@@ -868,7 +859,7 @@ fn format_number(value: f32) -> String {
 fn needs_mix(kind: ActionKind) -> bool {
     matches!(
         kind,
-        ActionKind::Program | ActionKind::Preview | ActionKind::Stinger | ActionKind::Overlay
+        ActionKind::Program | ActionKind::Preview | ActionKind::Overlay
     )
 }
 
@@ -1154,7 +1145,7 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
     let input = params.input.trim();
     let mix = tcp_mix_value(params.mix).map(|value| value.to_string());
     let query = match kind {
-        ActionKind::Program | ActionKind::Preview | ActionKind::Stinger => {
+        ActionKind::Program | ActionKind::Preview => {
             join_query(&[("Input", input), ("Mix", mix.as_deref().unwrap_or(""))])
         }
         ActionKind::Transition => {
@@ -1239,13 +1230,10 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
         }
         ActionKind::Ptz => join_query(&[("Input", input)]),
         ActionKind::Replay => {
-            if params.replay_action == "channel"
-                || params.replay_action == "startstop"
-                || params.channel.trim().is_empty()
-            {
+            if params.replay_action == "channel" || params.replay_action == "startstop" {
                 String::new()
             } else {
-                let channel = params.channel.trim().to_ascii_uppercase();
+                let channel = replay_channel(params);
                 join_query(&[("Channel", channel.as_str())])
             }
         }
@@ -1596,7 +1584,7 @@ mod tests {
     }
 
     #[test]
-    fn jog_command_uses_step_and_optional_channel() {
+    fn jog_command_uses_step_and_defaults_channel_to_a() {
         let params = ActionParams {
             step: 2.0,
             channel: "A".into(),
@@ -1614,7 +1602,11 @@ mod tests {
         let Command::Function { query, .. } = jog_command(&no_channel, 4) else {
             panic!("function");
         };
-        assert_eq!(query.as_deref(), Some("Value=4"));
+        assert_eq!(query.as_deref(), Some("Value=4&Channel=A"));
+        let Command::Function { query, .. } = jog_press_command(&no_channel) else {
+            panic!("function");
+        };
+        assert_eq!(query.as_deref(), Some("Channel=A"));
         let Command::Function { name, query } = jog_press_command(&params) else {
             panic!("function");
         };

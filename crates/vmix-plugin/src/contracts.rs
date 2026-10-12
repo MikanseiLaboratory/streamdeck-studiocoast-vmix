@@ -217,8 +217,6 @@ pub struct ActionParams {
     pub overlay: u8,
     #[serde(default = "default_toggle")]
     pub overlay_mode: String,
-    #[serde(default = "default_one")]
-    pub stinger: u8,
     #[serde(default = "default_play")]
     pub replay_action: String,
     #[serde(default)]
@@ -324,7 +322,6 @@ impl Default for ActionParams {
             duration_ms: String::new(),
             overlay: 1,
             overlay_mode: default_toggle(),
-            stinger: 1,
             replay_action: default_play(),
             channel: String::new(),
             audio_target: default_input_target(),

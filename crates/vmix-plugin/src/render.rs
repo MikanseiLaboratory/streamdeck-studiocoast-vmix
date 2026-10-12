@@ -151,7 +151,6 @@ fn icon_path(kind: ActionKind) -> &'static str {
             r#"<rect x="8" y="16" width="48" height="32" rx="4"/><path d="M20 32h24"/>"#
         }
         ActionKind::Transition => r#"<path d="M12 40h40M32 16v24"/>"#,
-        ActionKind::Stinger => r#"<path d="M16 40l16-24 16 24"/>"#,
         ActionKind::FadeToBlack => r#"<rect x="12" y="16" width="40" height="32"/>"#,
         ActionKind::Overlay => {
             r#"<rect x="8" y="20" width="28" height="20"/><rect x="28" y="12" width="28" height="20"/>"#

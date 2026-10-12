@@ -122,11 +122,6 @@ vmix_key!(
     ActionKind::Transition
 );
 vmix_key!(
-    StingerAction,
-    "dev.mikanseilaboratory.vmix.stinger",
-    ActionKind::Stinger
-);
-vmix_key!(
     FadeToBlackAction,
     "dev.mikanseilaboratory.vmix.fadetoblack",
     ActionKind::FadeToBlack
@@ -558,7 +553,6 @@ pub fn force_link() {
         std::any::TypeId::of::<ProgramAction>(),
         std::any::TypeId::of::<PreviewAction>(),
         std::any::TypeId::of::<TransitionAction>(),
-        std::any::TypeId::of::<StingerAction>(),
         std::any::TypeId::of::<FadeToBlackAction>(),
         std::any::TypeId::of::<OverlayAction>(),
         std::any::TypeId::of::<RecordingAction>(),
