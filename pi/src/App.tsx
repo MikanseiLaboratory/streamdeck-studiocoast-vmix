@@ -635,7 +635,7 @@ function ActionFields({
       )}
       {kind === "title" && <TitleFields params={params} onChange={onChange} />}
       {TOGGLES.includes(kind) && (
-        <TextField label="Active color" value={params.activeColor} onChange={(activeColor) => onChange({ ...params, activeColor })} />
+        <ColorField label="Active color" value={params.activeColor} onChange={(activeColor) => onChange({ ...params, activeColor })} />
       )}
       {!DIALS.includes(kind) && release}
     </>
@@ -666,7 +666,7 @@ function DirectFields({
   const setMode = (commandMode: string) => onChange({ ...params, commandMode });
   const input = <InputField params={params} inputs={inputs} dynamic={dynamic} onChange={onChange} />;
   const color = TOGGLES.includes(kind) ? (
-    <TextField label="Active color" value={params.activeColor} onChange={(activeColor) => onChange({ ...params, activeColor })} />
+    <ColorField label="Active color" value={params.activeColor} onChange={(activeColor) => onChange({ ...params, activeColor })} />
   ) : null;
   if (kind === "loop" || kind === "audioauto") {
     return (
@@ -1167,7 +1167,7 @@ function InputField({
       <div type="select" className="sdpi-item">
         <div className="sdpi-item-label">Input</div>
         <select className="sdpi-item-value select" value={current} onChange={(event) => onChange({ ...params, input: event.target.value })}>
-          <option value="">{inputs.length === 0 ? "Waiting for inputs" : "Select input"}</option>
+          <option value="">None</option>
           {specials.map((item) => (
             <option key={item.value} value={item.value}>
               {item.label}
@@ -1299,6 +1299,20 @@ function SelectField({
           </option>
         ))}
       </select>
+    </div>
+  );
+}
+
+function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const stored = value.trim();
+  const shown = /^#[0-9a-fA-F]{6}$/.test(stored) ? stored : "#4c8dff";
+  return (
+    <div className="sdpi-item">
+      <div className="sdpi-item-label">{label}</div>
+      <input className="sdpi-item-value" type="color" value={shown} aria-label={label} onChange={(event) => onChange(event.target.value)} />
+      <button className="sdpi-item-value" type="button" onClick={() => onChange("")}>
+        Instance
+      </button>
     </div>
   );
 }
