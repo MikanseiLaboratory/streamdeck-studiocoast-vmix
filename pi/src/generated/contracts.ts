@@ -50,7 +50,11 @@ rawPush: string,
 /**
  * Raw Function dial touch. Empty sends nothing.
  */
-rawTouch: string, };
+rawTouch: string, 
+/**
+ * Raw Function key release. Empty sends nothing. Same line as `raw`.
+ */
+rawRelease: string, };
 
 export type ShortcutCall = { functionName: string, input: string, value: string, channel: string, mix: number, durationMs: string, selectedName: string, extra: string, };
 

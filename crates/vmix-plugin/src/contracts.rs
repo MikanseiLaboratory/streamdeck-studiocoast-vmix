@@ -273,6 +273,9 @@ pub struct ActionParams {
     /// Raw Function dial touch. Empty sends nothing.
     #[serde(default)]
     pub raw_touch: String,
+    /// Raw Function key release. Empty sends nothing. Same line as `raw`.
+    #[serde(default)]
+    pub raw_release: String,
 }
 
 fn default_cut() -> String {
@@ -345,6 +348,7 @@ impl Default for ActionParams {
             raw_rotate_down: String::new(),
             raw_push: String::new(),
             raw_touch: String::new(),
+            raw_release: String::new(),
         }
     }
 }

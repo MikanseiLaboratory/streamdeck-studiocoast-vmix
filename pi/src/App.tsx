@@ -50,7 +50,8 @@ const emptyParams = (): ActionParams => ({
   rawRotateUp: "",
   rawRotateDown: "",
   rawPush: "",
-  rawTouch: ""
+  rawTouch: "",
+  rawRelease: ""
 });
 
 const emptyCall = (): ShortcutCall => ({
@@ -499,6 +500,9 @@ function ActionFields({
       <>
         <ReplayChannelField params={params} onChange={onChange} />
         <StepField params={params} onChange={onChange} min={kind === "replayspeed" ? 0.05 : 1} max={kind === "replayspeed" ? 1 : 100} increment={kind === "replayspeed" ? 0.05 : 1} />
+        {kind === "replayspeed" && (
+          <p className="shortcut-note">Each tick adds or subtracts this step. ReplayChangeSpeed does not set an absolute speed.</p>
+        )}
       </>
     );
   }
@@ -559,8 +563,8 @@ function ActionFields({
     return (
       <>
         <TextField label="Function" value={params.raw} onChange={(raw) => onChange({ ...params, raw })} />
-        <p className="shortcut-note">Type Play&amp;Input=1. The FUNCTION word is added when sending.</p>
-        {release}
+        <TextField label="On release" value={params.rawRelease} onChange={(rawRelease) => onChange({ ...params, rawRelease })} />
+        <p className="shortcut-note">Type Play&amp;Input=1. The FUNCTION word is added when sending. An empty On release sends nothing.</p>
       </>
     );
   }
@@ -788,7 +792,7 @@ function DirectFields({
   if (kind === "replaycamera") {
     return (
       <>
-        <SelectField label="Channel" value={params.channel || "selected"} options={["selected", "a", "b"]} labels={["Selected", "A", "B"]} onChange={(channel) => onChange({ ...params, channel: channel === "selected" ? "" : channel })} />
+        <SelectField label="Channel" value={params.channel || "selected"} options={["selected", "a", "b", "c", "d"]} labels={["Selected", "A", "B", "C", "D"]} onChange={(channel) => onChange({ ...params, channel: channel === "selected" ? "" : channel })} />
         <NumberSelect label="Camera" value={Number(params.index) || 1} max={8} onChange={(index) => onChange({ ...params, index: String(index) })} />
         {release}
       </>
@@ -999,6 +1003,25 @@ function ShortcutParam({
     return <TextField label="Value" value={call.value} onChange={(value) => onChange({ ...call, value })} />;
   }
   if (name === "Channel") {
+    const category = SHORTCUTS.find((item) => item.Name === call.functionName)?.Category;
+    if (category === "Replay") {
+      const stored = call.channel.trim().toUpperCase();
+      const options = ["", "A", "B", "C", "D"];
+      const labels = ["None", "A", "B", "C", "D"];
+      if (stored && !options.includes(stored)) {
+        options.push(stored);
+        labels.push(stored);
+      }
+      return (
+        <SelectField
+          label="Channel"
+          value={options.includes(stored) ? stored : ""}
+          options={options}
+          labels={labels}
+          onChange={(channel) => onChange({ ...call, channel })}
+        />
+      );
+    }
     return <TextField label="Channel" value={call.channel} onChange={(channel) => onChange({ ...call, channel })} />;
   }
   if (name === "SelectedName") {
@@ -1143,6 +1166,11 @@ function InputField({
   const paramsRef = useRef(params);
   paramsRef.current = params;
   useEffect(() => {
+    const migrated = legacySpecialInput(current);
+    if (migrated !== current) {
+      onChange({ ...paramsRef.current, input: migrated });
+      return;
+    }
     if (isSpecialInput(current)) return;
     const match = inputs.find((input) => input.key === current || String(input.number) === current);
     if (!match) return;
@@ -1154,8 +1182,8 @@ function InputField({
     (input) => inputToken(input, useNumber) === current || input.key === current || String(input.number) === current
   );
   const specials = [
-    { value: "Active", label: "Active" },
-    { value: "Preview", label: "Preview" },
+    { value: "0", label: "Preview" },
+    { value: "-1", label: "Program" },
     ...[1, 2, 3, 4].map((slot) => ({
       value: `Dynamic${slot}`,
       label: dynamicLabel(slot, dynamic[slot - 1] ?? "", inputs)
@@ -1198,7 +1226,15 @@ function InputField({
 }
 
 function isSpecialInput(value: string) {
-  return value === "Active" || value === "Preview" || /^Dynamic[1-4]$/.test(value);
+  const token = value.trim().toLowerCase();
+  return token === "0" || token === "-1" || token === "preview" || token === "active" || token === "program" || /^dynamic[1-4]$/.test(token);
+}
+
+function legacySpecialInput(value: string) {
+  const token = value.trim().toLowerCase();
+  if (token === "preview") return "0";
+  if (token === "active" || token === "program") return "-1";
+  return value;
 }
 
 function dynamicLabel(slot: number, raw: string, inputs: LiveInput[]) {
@@ -1311,8 +1347,9 @@ function ReplayChannelField({ params, onChange }: { params: ActionParams; onChan
     if (params.channel.trim()) return;
     onChangeRef.current({ ...paramsRef.current, channel: "a" });
   }, [params.channel]);
-  const shown = params.channel.trim().toLowerCase() === "b" ? "b" : "a";
-  return <SelectField label="Channel" value={shown} options={["a", "b"]} labels={["A", "B"]} onChange={(channel) => onChange({ ...params, channel })} />;
+  const letter = params.channel.trim().toLowerCase();
+  const shown = letter === "b" || letter === "c" || letter === "d" ? letter : "a";
+  return <SelectField label="Channel" value={shown} options={["a", "b", "c", "d"]} labels={["A", "B", "C", "D"]} onChange={(channel) => onChange({ ...params, channel })} />;
 }
 
 function ColorField({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {

@@ -218,8 +218,10 @@ pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> 
         ActionKind::ReplayCamera => {
             let camera = camera_number(params);
             match params.channel.trim().to_ascii_lowercase().as_str() {
-                "a" => format!("A{camera}"),
-                "b" => format!("B{camera}"),
+                "a" | "b" | "c" | "d" => format!(
+                    "{}{camera}",
+                    params.channel.trim().chars().next().unwrap_or('A').to_ascii_uppercase()
+                ),
                 _ => camera.to_string(),
             }
         }
@@ -307,13 +309,13 @@ pub fn volume_command(params: &ActionParams, percent: u8) -> Command {
             format!("SetBus{}Volume", bus_letter(params)),
             Some(format!("Value={value}")),
         ),
-        _ => (
-            "SetVolume".to_string(),
-            Some(join_query(&[
-                ("Value", value.as_str()),
-                ("Input", params.input.trim()),
-            ])),
-        ),
+        _ => {
+            let input = command_input(params.input.trim());
+            (
+                "SetVolume".to_string(),
+                Some(join_query(&[("Value", value.as_str()), ("Input", input.as_str())])),
+            )
+        }
     };
     Command::Function {
         name,
@@ -419,16 +421,14 @@ pub fn rotate_command(
                 rate_max(params),
             ),
         )),
-        ActionKind::ReplaySpeed => Some(replay_speed_command(
-            params,
-            adjust_range(
-                replay_speed_level(state, params).unwrap_or(1.0),
-                ticks,
-                dial_step(kind, params),
-                0.1,
-                4.0,
-            ),
-        )),
+        ActionKind::ReplaySpeed => {
+            let delta = ticks as f32 * dial_step(kind, params);
+            if delta == 0.0 {
+                None
+            } else {
+                Some(replay_speed_command(params, delta))
+            }
+        }
         ActionKind::Position => {
             let (position, duration) = position_level(state, params);
             let step = dial_step(kind, params).round() as i64;
@@ -470,6 +470,16 @@ pub fn touch_command(kind: ActionKind, params: &ActionParams) -> Option<Command>
     } else {
         press_command(kind, params)
     }
+}
+
+pub fn key_release_command(kind: ActionKind, params: &ActionParams) -> Option<Command> {
+    if kind == ActionKind::Raw {
+        let raw = params.raw_release.trim();
+        if !raw.is_empty() {
+            return raw_function(raw);
+        }
+    }
+    release_command(&params.release)
 }
 
 pub fn release_command(call: &ShortcutCall) -> Option<Command> {
@@ -735,6 +745,8 @@ fn rate_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
 fn replay_speed_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
     match params.channel.trim().to_ascii_lowercase().as_str() {
         "b" => state.replay_speed_b.or(state.replay_speed),
+        "c" => state.replay_speed_c.or(state.replay_speed),
+        "d" => state.replay_speed_d.or(state.replay_speed),
         _ => state.replay_speed_a.or(state.replay_speed),
     }
 }
@@ -775,11 +787,12 @@ pub fn mixer_command(params: &ActionParams, percent: u8) -> Command {
     } else {
         format!("SetVolumeBusMixer{}", bus_letter(params))
     };
+    let input = command_input(params.input.trim());
     Command::Function {
         name,
         query: Some(join_query(&[
             ("Value", value.as_str()),
-            ("Input", params.input.trim()),
+            ("Input", input.as_str()),
         ]))
         .filter(|query| !query.is_empty()),
     }
@@ -787,11 +800,12 @@ pub fn mixer_command(params: &ActionParams, percent: u8) -> Command {
 
 pub fn gain_command(params: &ActionParams, db: f32) -> Command {
     let value = format_number(db);
+    let input = command_input(params.input.trim());
     Command::Function {
         name: "SetGain".into(),
         query: Some(join_query(&[
             ("Value", value.as_str()),
-            ("Input", params.input.trim()),
+            ("Input", input.as_str()),
         ]))
         .filter(|query| !query.is_empty()),
     }
@@ -804,11 +818,12 @@ pub fn rate_command(params: &ActionParams, rate: f32) -> Command {
     } else {
         "SetRate"
     };
+    let input = command_input(params.input.trim());
     Command::Function {
         name: name.into(),
         query: Some(join_query(&[
             ("Value", value.as_str()),
-            ("Input", params.input.trim()),
+            ("Input", input.as_str()),
         ]))
         .filter(|query| !query.is_empty()),
     }
@@ -827,6 +842,16 @@ pub fn replay_speed_command(params: &ActionParams, speed: f32) -> Command {
     }
 }
 
+/// vMix Input values. Preview is `0` and Program is `-1`, matching the shortcut API.
+fn command_input(spec: &str) -> String {
+    let spec = spec.trim();
+    match spec.to_ascii_lowercase().as_str() {
+        "0" | "preview" => "0".into(),
+        "-1" | "active" | "program" => "-1".into(),
+        _ => spec.to_string(),
+    }
+}
+
 fn replay_channel(params: &ActionParams) -> String {
     let channel = params.channel.trim();
     if channel.is_empty() {
@@ -838,11 +863,12 @@ fn replay_channel(params: &ActionParams) -> String {
 
 pub fn position_command(params: &ActionParams, ms: u64) -> Command {
     let value = ms.to_string();
+    let input = command_input(params.input.trim());
     Command::Function {
         name: "SetPosition".into(),
         query: Some(join_query(&[
             ("Value", value.as_str()),
-            ("Input", params.input.trim()),
+            ("Input", input.as_str()),
         ]))
         .filter(|query| !query.is_empty()),
     }
@@ -987,13 +1013,7 @@ fn replay_function(params: &ActionParams) -> String {
         "startstop" => "ReplayStartStopRecording".into(),
         "next" => "ReplaySelectNextEvent".into(),
         "previous" => "ReplaySelectPreviousEvent".into(),
-        "channel" => {
-            if params.channel.eq_ignore_ascii_case("b") {
-                "ReplaySelectChannelB".into()
-            } else {
-                "ReplaySelectChannelA".into()
-            }
-        }
+        "channel" => format!("ReplaySelectChannel{}", replay_channel(params)),
         _ => "ReplayPlayPause".into(),
     }
 }
@@ -1111,8 +1131,10 @@ fn camera_number(params: &ActionParams) -> u8 {
 fn replay_camera_function(params: &ActionParams) -> String {
     let camera = camera_number(params);
     match params.channel.trim().to_ascii_lowercase().as_str() {
-        "a" => format!("ReplayACamera{camera}"),
-        "b" => format!("ReplayBCamera{camera}"),
+        "a" | "b" | "c" | "d" => format!(
+            "Replay{}Camera{camera}",
+            params.channel.trim().chars().next().unwrap_or('A').to_ascii_uppercase()
+        ),
         _ => format!("ReplayCamera{camera}"),
     }
 }
@@ -1142,7 +1164,8 @@ fn title_function(params: &ActionParams) -> String {
 }
 
 fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
-    let input = params.input.trim();
+    let input_owned = command_input(params.input.trim());
+    let input = input_owned.as_str();
     let mix = tcp_mix_value(params.mix).map(|value| value.to_string());
     let query = match kind {
         ActionKind::Program | ActionKind::Preview => {
@@ -1384,8 +1407,9 @@ fn fields_query(
     let mix = tcp_mix_value(mix).map(|value| value.to_string());
     let encoded_value = encode(value).into_owned();
     let encoded_selected = encode(selected_name).into_owned();
+    let input = command_input(input);
     let mut query = join_query(&[
-        ("Input", input),
+        ("Input", input.as_str()),
         ("Value", encoded_value.as_str()),
         ("Channel", channel),
         ("Mix", mix.as_deref().unwrap_or("")),
@@ -1691,6 +1715,24 @@ mod tests {
             panic!("function");
         };
         assert_eq!(query.as_deref(), Some("Value=1.10&Channel=A"));
+        let speed = ActionParams {
+            channel: "A".into(),
+            step: 0.1,
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } =
+            rotate_command(ActionKind::ReplaySpeed, &speed, &loaded(), 1).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayChangeSpeed");
+        assert_eq!(query.as_deref(), Some("Value=0.10&Channel=A"));
+        let Command::Function { query, .. } =
+            rotate_command(ActionKind::ReplaySpeed, &speed, &loaded(), -2).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(query.as_deref(), Some("Value=-0.20&Channel=A"));
     }
 
     #[test]
@@ -1751,6 +1793,17 @@ mod tests {
         };
         assert_eq!(name, "Play");
         assert_eq!(query.as_deref(), Some("Input=XXX"));
+        let release = ActionParams {
+            raw_release: "FUNCTION ReplayPlay&Channel=C".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } =
+            key_release_command(ActionKind::Raw, &release).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayPlay");
+        assert_eq!(query.as_deref(), Some("Channel=C"));
     }
 
     #[test]
@@ -1937,5 +1990,16 @@ mod tests {
             ..ActionParams::default()
         };
         assert_eq!(title_for(ActionKind::Program, &dynamic, &state), "2");
+        let Command::Function { query, .. } =
+            command_for(ActionKind::Preview, &preview).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(query.as_deref(), Some("Input=0"));
+        let Command::Function { query, .. } = command_for(ActionKind::Program, &active).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(query.as_deref(), Some("Input=-1"));
     }
 }

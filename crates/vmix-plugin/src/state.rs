@@ -558,7 +558,7 @@ impl AppState {
         let targets = self.targets_for(&snapshot.settings).await;
         for id in &targets {
             let params = snapshot.settings.params_for(id);
-            let Some(command) = ops::release_command(&params.release) else {
+            let Some(command) = ops::key_release_command(snapshot.kind, params) else {
                 continue;
             };
             let _ = self.pool.send(id, command);

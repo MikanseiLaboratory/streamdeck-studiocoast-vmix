@@ -60,6 +60,8 @@ pub struct VmixState {
     pub replay_speed: Option<f32>,
     pub replay_speed_a: Option<f32>,
     pub replay_speed_b: Option<f32>,
+    pub replay_speed_c: Option<f32>,
+    pub replay_speed_d: Option<f32>,
     pub inputs: Vec<CachedInput>,
     pub mixes_present: HashSet<u8>,
     /// vMix dynamic input slots 1–4, as stored in XML (`input1`..`input4`).
@@ -101,15 +103,15 @@ impl VmixState {
         user_mix == 0 || self.mixes_present.contains(&user_mix)
     }
 
-    /// Resolve a normal input or a live token (`Active`, `Preview`, `Dynamic1`–`Dynamic4`).
+    /// Resolve a normal input, `0`/`Preview`, `-1`/`Program`, or `Dynamic1`–`Dynamic4`.
     pub fn resolve_spec(&self, spec: &str, mix: u8) -> Option<u16> {
         let spec = spec.trim();
         if spec.is_empty() {
             return None;
         }
         match spec.to_ascii_lowercase().as_str() {
-            "active" | "program" => self.program.get(&mix).copied().filter(|input| *input > 0),
-            "preview" => self.preview.get(&mix).copied().filter(|input| *input > 0),
+            "-1" | "active" | "program" => self.program.get(&mix).copied().filter(|input| *input > 0),
+            "0" | "preview" => self.preview.get(&mix).copied().filter(|input| *input > 0),
             "dynamic1" => self.resolve_dynamic(0),
             "dynamic2" => self.resolve_dynamic(1),
             "dynamic3" => self.resolve_dynamic(2),
@@ -164,6 +166,8 @@ pub fn display_fingerprint(state: &VmixState) -> u64 {
     hash_opt_f32(state.replay_speed, &mut hasher);
     hash_opt_f32(state.replay_speed_a, &mut hasher);
     hash_opt_f32(state.replay_speed_b, &mut hasher);
+    hash_opt_f32(state.replay_speed_c, &mut hasher);
+    hash_opt_f32(state.replay_speed_d, &mut hasher);
     for input in &state.inputs {
         input.number.hash(&mut hasher);
         input.key.hash(&mut hasher);
@@ -524,6 +528,12 @@ fn apply_xml_extras(state: &mut VmixState, xml: &str) {
         if let Some(speed) = xml_attr(tag, "speedB").and_then(|value| value.parse::<f32>().ok()) {
             state.replay_speed_b = Some(speed);
         }
+        if let Some(speed) = xml_attr(tag, "speedC").and_then(|value| value.parse::<f32>().ok()) {
+            state.replay_speed_c = Some(speed);
+        }
+        if let Some(speed) = xml_attr(tag, "speedD").and_then(|value| value.parse::<f32>().ok()) {
+            state.replay_speed_d = Some(speed);
+        }
     }
 }
 
@@ -704,7 +714,7 @@ mod tests {
 
     #[test]
     fn xml_keeps_gain_position_and_replay_speed() {
-        let xml = r#"<vmix><version>29.0.0.0</version><edition>4K</edition><inputs><input key="cam-key" number="1" type="Replay" title="Cam" shortTitle="Cam" state="Running" position="15000" duration="60000" loop="False" muted="False" volume="80" gainDb="6" rate="0.5"><replay live="False" recording="False" channelMode="AB" events="0" eventsA="0" eventsB="0" cameraA="1" cameraB="1" speed="0.25" speedA="0.5" speedB="1"></replay></input></inputs><overlays><overlay number="1"></overlay></overlays><preview>1</preview><active>1</active><fadeToBlack>False</fadeToBlack><transitions><transition number="1" effect="Fade" duration="500"></transition></transitions><recording>False</recording><external>False</external><streaming>False</streaming><playList>False</playList><multiCorder>False</multiCorder><fullscreen>False</fullscreen><audio><master volume="100" muted="False" meterF1="0" meterF2="0" headphonesVolume="25"></master></audio><dynamic><input1></input1><input2></input2><input3></input3><input4></input4><value1></value1><value2></value2><value3></value3><value4></value4></dynamic></vmix>"#;
+        let xml = r#"<vmix><version>29.0.0.0</version><edition>4K</edition><inputs><input key="cam-key" number="1" type="Replay" title="Cam" shortTitle="Cam" state="Running" position="15000" duration="60000" loop="False" muted="False" volume="80" gainDb="6" rate="0.5"><replay live="False" recording="False" channelMode="AB" events="0" eventsA="0" eventsB="0" cameraA="1" cameraB="1" speed="0.25" speedA="0.5" speedB="1" speedC="1.5" speedD="2"></replay></input></inputs><overlays><overlay number="1"></overlay></overlays><preview>1</preview><active>1</active><fadeToBlack>False</fadeToBlack><transitions><transition number="1" effect="Fade" duration="500"></transition></transitions><recording>False</recording><external>False</external><streaming>False</streaming><playList>False</playList><multiCorder>False</multiCorder><fullscreen>False</fullscreen><audio><master volume="100" muted="False" meterF1="0" meterF2="0" headphonesVolume="25"></master></audio><dynamic><input1></input1><input2></input2><input3></input3><input4></input4><value1></value1><value2></value2><value3></value3><value4></value4></dynamic></vmix>"#;
         let mut state = VmixState::default();
         apply_xml(&mut state, xml).unwrap();
         assert!((state.input_gain.get(&1).copied().unwrap_or(0.0) - 6.0).abs() < 0.001);
@@ -713,6 +723,8 @@ mod tests {
         assert!((state.input_rate.get(&1).copied().unwrap_or(0.0) - 0.5).abs() < 0.001);
         assert!((state.replay_speed.unwrap_or(0.0) - 0.25).abs() < 0.001);
         assert!((state.replay_speed_a.unwrap_or(0.0) - 0.5).abs() < 0.001);
+        assert!((state.replay_speed_c.unwrap_or(0.0) - 1.5).abs() < 0.001);
+        assert!((state.replay_speed_d.unwrap_or(0.0) - 2.0).abs() < 0.001);
         assert!((state.master_headphones - 0.25).abs() < 0.001);
         assert!(!state.input_loop.get(&1).copied().unwrap_or(true));
         assert!(!state.playlist);
@@ -730,7 +742,9 @@ mod tests {
         let mut state = VmixState::default();
         apply_xml(&mut state, xml).unwrap();
         assert_eq!(state.resolve_spec("Active", 0), Some(1));
+        assert_eq!(state.resolve_spec("-1", 0), Some(1));
         assert_eq!(state.resolve_spec("Preview", 0), Some(2));
+        assert_eq!(state.resolve_spec("0", 0), Some(2));
         assert_eq!(state.resolve_spec("Dynamic1", 0), Some(2));
         assert_eq!(state.resolve_spec("Dynamic3", 0), Some(1));
         assert_eq!(state.resolve_spec("Dynamic2", 0), None);
