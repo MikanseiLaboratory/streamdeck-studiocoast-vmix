@@ -16,7 +16,7 @@ export type LiveInstance = {
 
 export type LiveInput = { number: number; title: string; key: string; shortTitle?: string };
 
-export type LiveCatalog = { id: string; inputs: LiveInput[]; mixes: number[] };
+export type LiveCatalog = { id: string; inputs: LiveInput[]; mixes: number[]; dynamic?: string[] };
 
 export type VmixConfigBridge = {
   getSettings: () => GlobalSettings;

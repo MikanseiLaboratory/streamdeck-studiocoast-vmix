@@ -82,6 +82,45 @@ pub fn key_image(kind: ActionKind, segments: &[Segment], foreground: &str) -> St
     )
 }
 
+pub fn bar_color(kind: ActionKind, active_color: &str, state: SegmentState, instance: &str) -> String {
+    if state != SegmentState::Active {
+        return instance.to_string();
+    }
+    match kind {
+        ActionKind::Program => "#e23b3b".into(),
+        ActionKind::Preview => "#3cbe6c".into(),
+        _ => {
+            let custom = active_color.trim();
+            if custom.is_empty() {
+                instance.to_string()
+            } else {
+                custom.to_string()
+            }
+        }
+    }
+}
+
+pub fn key_face_token(segments: &[Segment], title: &str, foreground: &str) -> String {
+    let mut token = String::from(foreground);
+    token.push('|');
+    token.push_str(title);
+    for segment in segments {
+        token.push('|');
+        token.push_str(&segment.label);
+        token.push(':');
+        token.push_str(&segment.color);
+        token.push(':');
+        token.push_str(match segment.state {
+            SegmentState::Active => "a",
+            SegmentState::Inactive => "i",
+            SegmentState::Intermediate => "m",
+            SegmentState::Neutral => "n",
+            SegmentState::Unavailable => "u",
+        });
+    }
+    token
+}
+
 fn fill_for(segment: &Segment) -> String {
     match segment.state {
         SegmentState::Active | SegmentState::Neutral => segment.color.clone(),
@@ -317,6 +356,44 @@ pub fn dial_feedback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_program_and_preview_ignore_the_instance_color() {
+        assert_eq!(
+            bar_color(ActionKind::Program, "", SegmentState::Active, "#4c8dff"),
+            "#e23b3b"
+        );
+        assert_eq!(
+            bar_color(ActionKind::Preview, "", SegmentState::Active, "#4c8dff"),
+            "#3cbe6c"
+        );
+        assert_eq!(
+            bar_color(ActionKind::Play, "#ff00aa", SegmentState::Active, "#4c8dff"),
+            "#ff00aa"
+        );
+        assert_eq!(
+            bar_color(ActionKind::Play, "", SegmentState::Active, "#4c8dff"),
+            "#4c8dff"
+        );
+        assert_eq!(
+            bar_color(ActionKind::Program, "", SegmentState::Inactive, "#4c8dff"),
+            "#4c8dff"
+        );
+    }
+
+    #[test]
+    fn unchanged_key_face_matches_only_the_same_drawing() {
+        let segment = Segment {
+            label: "Local".into(),
+            color: "#e23b3b".into(),
+            state: SegmentState::Active,
+        };
+        let first = key_face_token(std::slice::from_ref(&segment), "1", "#f4f7fb");
+        let again = key_face_token(std::slice::from_ref(&segment), "1", "#f4f7fb");
+        assert_eq!(first, again);
+        let other = key_face_token(std::slice::from_ref(&segment), "2", "#f4f7fb");
+        assert_ne!(first, other);
+    }
 
     #[test]
     fn hardware_state_is_on_only_when_every_segment_is_active() {

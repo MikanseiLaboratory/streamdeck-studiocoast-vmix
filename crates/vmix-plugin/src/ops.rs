@@ -3,7 +3,7 @@ use vmix_pool::{
     acts_preview_name, acts_program_name, normalize_amplitude, tcp_mix_value, Command, VmixState,
 };
 
-use crate::contracts::ActionParams;
+use crate::contracts::{ActionParams, ShortcutCall};
 use crate::kind::ActionKind;
 use crate::render::SegmentState;
 
@@ -64,11 +64,13 @@ pub fn segment_for(
             state.program.get(&params.mix).copied(),
             state,
             &params.input,
+            params.mix,
         ),
         ActionKind::Preview => lit_input(
             state.preview.get(&params.mix).copied(),
             state,
             &params.input,
+            params.mix,
         ),
         ActionKind::Overlay => {
             let current = state.overlays.get(&params.overlay.clamp(1, 8)).copied();
@@ -79,7 +81,7 @@ pub fn segment_for(
                     SegmentState::Inactive
                 };
             }
-            lit_input(current, state, &params.input)
+            lit_input(current, state, &params.input, params.mix)
         }
         ActionKind::FadeToBlack => flag(state.fade_to_black),
         ActionKind::Recording => flag(state.recording),
@@ -95,13 +97,13 @@ pub fn segment_for(
         ActionKind::Solo => flag(solo_on(state, params)),
         ActionKind::BusSend => flag(bus_send_on(state, params)),
         ActionKind::Play => {
-            let Some(input) = state.resolve_input(&params.input) else {
+            let Some(input) = aimed(state, params) else {
                 return SegmentState::Inactive;
             };
             flag(state.input_playing.get(&input).copied().unwrap_or(false))
         }
         ActionKind::List => {
-            let Some(input) = state.resolve_input(&params.input) else {
+            let Some(input) = aimed(state, params) else {
                 return SegmentState::Inactive;
             };
             let current = state
@@ -159,14 +161,13 @@ pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> 
             }
         }
         ActionKind::Shortcut => shortcut_name(params),
-        ActionKind::Program | ActionKind::Preview | ActionKind::Play | ActionKind::Mute => state
-            .resolve_input(&params.input)
+        ActionKind::Play => play_title(params, state),
+        ActionKind::Program | ActionKind::Preview | ActionKind::Mute => aimed(state, params)
             .map(|number| number.to_string())
             .unwrap_or_else(|| params.input.clone()),
         ActionKind::Overlay => format!("OL{}", params.overlay.clamp(1, 8)),
         ActionKind::Stinger => format!("ST{}", params.stinger.clamp(1, 8)),
-        ActionKind::List => state
-            .resolve_input(&params.input)
+        ActionKind::List => aimed(state, params)
             .and_then(|input| {
                 state
                     .inputs
@@ -181,7 +182,7 @@ pub fn title_for(kind: ActionKind, params: &ActionParams, state: &VmixState) -> 
 
 pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
     let function = match kind {
-        ActionKind::Program => "ActiveInput".to_string(),
+        ActionKind::Program => program_function(params),
         ActionKind::Preview => "PreviewInput".to_string(),
         ActionKind::Transition => transition_function(params),
         ActionKind::Stinger => format!("Stinger{}", params.stinger.clamp(1, 8)),
@@ -203,13 +204,7 @@ pub fn command_for(kind: ActionKind, params: &ActionParams) -> Option<Command> {
             let (name, query) = shortcut_parts(params)?;
             return Some(Command::Function { name, query });
         }
-        ActionKind::Raw => {
-            return if params.raw.trim().is_empty() {
-                None
-            } else {
-                Some(Command::Raw(params.raw.clone()))
-            };
-        }
+        ActionKind::Raw => return raw_function(&params.raw),
         ActionKind::Volume
         | ActionKind::ReplayJog
         | ActionKind::Gain
@@ -379,6 +374,134 @@ pub fn rotate_command(
     }
 }
 
+pub fn rotate_commands(
+    kind: ActionKind,
+    params: &ActionParams,
+    state: &VmixState,
+    ticks: i32,
+) -> Vec<Command> {
+    if ticks > 0 && !params.rotate_up.function_name.trim().is_empty() {
+        return custom_rotate_commands(&params.rotate_up, ticks);
+    }
+    if ticks < 0 && !params.rotate_down.function_name.trim().is_empty() {
+        return custom_rotate_commands(&params.rotate_down, ticks);
+    }
+    rotate_command(kind, params, state, ticks)
+        .into_iter()
+        .collect()
+}
+
+pub fn touch_command(kind: ActionKind, params: &ActionParams) -> Option<Command> {
+    if params.touch.function_name.trim().is_empty() {
+        press_command(kind, params)
+    } else {
+        command_from_call(&params.touch, None)
+    }
+}
+
+pub fn release_command(call: &ShortcutCall) -> Option<Command> {
+    if call.function_name.trim().is_empty() {
+        None
+    } else {
+        command_from_call(call, None)
+    }
+}
+
+fn custom_rotate_commands(call: &ShortcutCall, ticks: i32) -> Vec<Command> {
+    let name = call.function_name.trim();
+    if name.is_empty() || ticks == 0 {
+        return Vec::new();
+    }
+    if shortcut_takes_value(name) {
+        let override_value = if call.value.trim().is_empty() {
+            Some(ticks.to_string())
+        } else {
+            None
+        };
+        return command_from_call(call, override_value.as_deref())
+            .into_iter()
+            .collect();
+    }
+    let Some(command) = command_from_call(call, None) else {
+        return Vec::new();
+    };
+    let times = ticks.unsigned_abs().max(1) as usize;
+    vec![command; times]
+}
+
+fn shortcut_takes_value(name: &str) -> bool {
+    vmix_rs::shortcuts::find(name).is_some_and(|shortcut| {
+        shortcut
+            .parameters
+            .iter()
+            .any(|parameter| matches!(parameter, vmix_rs::shortcuts::Parameter::Value))
+    })
+}
+
+pub fn command_from_call(call: &ShortcutCall, value_override: Option<&str>) -> Option<Command> {
+    let line = call.function_name.trim();
+    if line.is_empty() {
+        return None;
+    }
+    if shortcut_line_is_complete(line) {
+        let (name, query) = split_shortcut_line(line)?;
+        if name.is_empty() {
+            return None;
+        }
+        return Some(Command::Function {
+            name,
+            query: if query.is_empty() { None } else { Some(query) },
+        });
+    }
+    let value = value_override.unwrap_or(call.value.trim());
+    let query = fields_query(
+        call.input.trim(),
+        value,
+        call.channel.trim(),
+        call.mix,
+        call.duration_ms.trim(),
+        call.selected_name.trim(),
+        call.extra.trim(),
+    );
+    Some(Command::Function {
+        name: line.to_string(),
+        query: if query.is_empty() { None } else { Some(query) },
+    })
+}
+
+fn raw_function(raw: &str) -> Option<Command> {
+    let line = raw.lines().find(|line| !line.trim().is_empty())?.trim();
+    let line = strip_function_word(line).trim();
+    if line.is_empty() {
+        return None;
+    }
+    let lower = line.to_ascii_lowercase();
+    if lower.starts_with("function=") || line.contains("://") {
+        let (name, query) = split_shortcut_line(line)?;
+        if name.is_empty() {
+            return None;
+        }
+        return Some(Command::Function {
+            name,
+            query: if query.is_empty() { None } else { Some(query) },
+        });
+    }
+    let (name, query) = line.split_once('&').unwrap_or((line, ""));
+    let name = name.trim();
+    if name.is_empty() || name.contains('=') {
+        return None;
+    }
+    let query = query.trim();
+    Some(Command::Function {
+        name: name.to_string(),
+        query: if query.is_empty() {
+            None
+        } else {
+            Some(query.to_string())
+        },
+    })
+}
+
 pub fn press_command(kind: ActionKind, params: &ActionParams) -> Option<Command> {
     match kind {
         ActionKind::Volume => Some(mute_command(params)),
@@ -420,8 +543,7 @@ pub fn volume_level(state: &VmixState, params: &ActionParams) -> f32 {
             .get(&bus_letter(params))
             .copied()
             .unwrap_or(0.0),
-        _ => state
-            .resolve_input(&params.input)
+        _ => aimed(state, params)
             .and_then(|input| state.input_volume.get(&input).copied())
             .unwrap_or(0.0),
     }
@@ -477,7 +599,7 @@ fn rate_max(params: &ActionParams) -> f32 {
 fn headphones_level(state: &VmixState, params: &ActionParams) -> f32 {
     if params.audio_target == "input" && !params.input.trim().is_empty() {
         state
-            .resolve_input(&params.input)
+            .resolve_spec(&params.input, params.mix)
             .and_then(|input| state.input_headphones.get(&input).copied())
             .unwrap_or(state.master_headphones)
     } else {
@@ -496,27 +618,22 @@ fn mixer_channel(params: &ActionParams) -> u8 {
 }
 
 fn gain_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
-    state
-        .resolve_input(&params.input)
-        .and_then(|input| state.input_gain.get(&input).copied())
+    aimed(state, params).and_then(|input| state.input_gain.get(&input).copied())
 }
 
 fn rate_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
-    state
-        .resolve_input(&params.input)
-        .and_then(|input| state.input_rate.get(&input).copied())
+    aimed(state, params).and_then(|input| state.input_rate.get(&input).copied())
 }
 
 fn replay_speed_level(state: &VmixState, params: &ActionParams) -> Option<f32> {
     match params.channel.trim().to_ascii_lowercase().as_str() {
-        "b" => state.replay_speed_b,
-        "a" => state.replay_speed_a.or(state.replay_speed),
-        _ => state.replay_speed,
+        "b" => state.replay_speed_b.or(state.replay_speed),
+        _ => state.replay_speed_a.or(state.replay_speed),
     }
 }
 
 fn position_level(state: &VmixState, params: &ActionParams) -> (u64, u64) {
-    let Some(input) = state.resolve_input(&params.input) else {
+    let Some(input) = aimed(state, params) else {
         return (0, 0);
     };
     (
@@ -592,13 +709,23 @@ pub fn rate_command(params: &ActionParams, rate: f32) -> Command {
 
 pub fn replay_speed_command(params: &ActionParams, speed: f32) -> Command {
     let value = format_number(speed);
+    let channel = replay_speed_channel(params);
     Command::Function {
         name: "ReplayChangeSpeed".into(),
         query: Some(join_query(&[
             ("Value", value.as_str()),
-            ("Channel", params.channel.trim()),
+            ("Channel", channel.as_str()),
         ]))
         .filter(|query| !query.is_empty()),
+    }
+}
+
+fn replay_speed_channel(params: &ActionParams) -> String {
+    let channel = params.channel.trim();
+    if channel.is_empty() {
+        "A".into()
+    } else {
+        channel.to_ascii_uppercase()
     }
 }
 
@@ -637,8 +764,33 @@ fn flag(on: bool) -> SegmentState {
     }
 }
 
-fn lit_input(current: Option<u16>, state: &VmixState, spec: &str) -> SegmentState {
-    let Some(wanted) = state.resolve_input(spec) else {
+fn aimed(state: &VmixState, params: &ActionParams) -> Option<u16> {
+    state.resolve_spec(&params.input, params.mix)
+}
+
+fn play_title(params: &ActionParams, state: &VmixState) -> String {
+    let (position, duration) = position_level(state, params);
+    if duration > 0 {
+        format_timestamp(duration.saturating_sub(position))
+    } else {
+        aimed(state, params)
+            .map(|number| number.to_string())
+            .unwrap_or_else(|| params.input.clone())
+    }
+}
+
+fn program_function(params: &ActionParams) -> String {
+    let main = params.mix == 0;
+    match params.program_mode.as_str() {
+        "cut" => "Cut".into(),
+        "activeInput" => "ActiveInput".into(),
+        _ if main => "CutDirect".into(),
+        _ => "Cut".into(),
+    }
+}
+
+fn lit_input(current: Option<u16>, state: &VmixState, spec: &str, mix: u8) -> SegmentState {
+    let Some(wanted) = state.resolve_spec(spec, mix) else {
         return SegmentState::Inactive;
     };
     if current == Some(wanted) {
@@ -653,7 +805,7 @@ fn audible(state: &VmixState, params: &ActionParams) -> Option<bool> {
         "master" => Some(state.master_audio),
         "bus" => state.bus_audio.get(&bus_letter(params)).copied(),
         _ => {
-            let input = state.resolve_input(&params.input)?;
+            let input = aimed(state, params)?;
             state.input_audio.get(&input).copied()
         }
     }
@@ -667,14 +819,13 @@ fn solo_on(state: &VmixState, params: &ActionParams) -> bool {
             .copied()
             .unwrap_or(false);
     }
-    state
-        .resolve_input(&params.input)
+    aimed(state, params)
         .and_then(|input| state.input_solo.get(&input).copied())
         .unwrap_or(false)
 }
 
 fn bus_send_on(state: &VmixState, params: &ActionParams) -> bool {
-    let Some(input) = state.resolve_input(&params.input) else {
+    let Some(input) = aimed(state, params) else {
         return false;
     };
     let bus = bus_letter(params);
@@ -726,6 +877,9 @@ fn replay_function(params: &ActionParams) -> String {
         "markin" => "ReplayMarkIn".into(),
         "markout" => "ReplayMarkOut".into(),
         "markinout" => "ReplayMarkInOut".into(),
+        "startstop" => "ReplayStartStopRecording".into(),
+        "next" => "ReplaySelectNextEvent".into(),
+        "previous" => "ReplaySelectPreviousEvent".into(),
         "channel" => {
             if params.channel.eq_ignore_ascii_case("b") {
                 "ReplaySelectChannelB".into()
@@ -834,10 +988,14 @@ fn query_for(kind: ActionKind, params: &ActionParams) -> Option<String> {
             .and_then(|(_, query)| query)
             .unwrap_or_default(),
         ActionKind::Replay => {
-            if params.replay_action == "channel" || params.channel.trim().is_empty() {
+            if params.replay_action == "channel"
+                || params.replay_action == "startstop"
+                || params.channel.trim().is_empty()
+            {
                 String::new()
             } else {
-                join_query(&[("Channel", params.channel.trim())])
+                let channel = params.channel.trim().to_ascii_uppercase();
+                join_query(&[("Channel", channel.as_str())])
             }
         }
         _ => String::new(),
@@ -964,15 +1122,38 @@ fn encode_shortcut_value(value: &str) -> String {
 }
 
 fn shortcut_query(params: &ActionParams) -> String {
-    let mix = tcp_mix_value(params.mix).map(|value| value.to_string());
+    fields_query(
+        params.input.trim(),
+        params.value.trim(),
+        params.channel.trim(),
+        params.mix,
+        params.duration_ms.trim(),
+        params.selected_name.trim(),
+        params.extra.trim(),
+    )
+}
+
+fn fields_query(
+    input: &str,
+    value: &str,
+    channel: &str,
+    mix: u8,
+    duration: &str,
+    selected_name: &str,
+    extra: &str,
+) -> String {
+    let mix = tcp_mix_value(mix).map(|value| value.to_string());
+    let encoded_value = encode(value).into_owned();
+    let encoded_selected = encode(selected_name).into_owned();
     let mut query = join_query(&[
-        ("Input", params.input.trim()),
-        ("Value", &encode(params.value.trim()).into_owned()),
-        ("Channel", params.channel.trim()),
+        ("Input", input),
+        ("Value", encoded_value.as_str()),
+        ("Channel", channel),
         ("Mix", mix.as_deref().unwrap_or("")),
-        ("Duration", params.duration_ms.trim()),
+        ("Duration", duration),
+        ("SelectedName", encoded_selected.as_str()),
     ]);
-    let extra = params.extra.trim().trim_start_matches('&');
+    let extra = extra.trim().trim_start_matches('&');
     if !extra.is_empty() {
         if !query.is_empty() {
             query.push('&');
@@ -1035,7 +1216,7 @@ mod tests {
         else {
             panic!("function");
         };
-        assert_eq!(name, "ActiveInput");
+        assert_eq!(name, "Cut");
         assert_eq!(query.as_deref(), Some("Input=1&Mix=1"));
         assert_eq!(watched_program_activator(2), "InputMix2");
         assert_eq!(watched_program_activator(0), "Input");
@@ -1262,5 +1443,143 @@ mod tests {
         assert_eq!(query.as_deref(), Some("Value=15000&Input=2"));
         assert_eq!(format_timestamp(15000), "00:15");
         assert_eq!(format_timestamp(3_661_000), "1:01:01");
+        let empty_channel = ActionParams::default();
+        let Command::Function { query, .. } = replay_speed_command(&empty_channel, 1.1) else {
+            panic!("function");
+        };
+        assert_eq!(query.as_deref(), Some("Value=1.10&Channel=A"));
+    }
+
+    #[test]
+    fn program_uses_cut_direct_on_main_and_cut_on_other_mixes() {
+        let main = ActionParams {
+            input: "3".into(),
+            mix: 0,
+            ..ActionParams::default()
+        };
+        let Command::Function { name, .. } = command_for(ActionKind::Program, &main).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "CutDirect");
+        let aux = ActionParams {
+            input: "3".into(),
+            mix: 2,
+            program_mode: "cutDirect".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = command_for(ActionKind::Program, &aux).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "Cut");
+        assert_eq!(query.as_deref(), Some("Input=3&Mix=1"));
+        let active = ActionParams {
+            input: "3".into(),
+            program_mode: "activeInput".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, .. } = command_for(ActionKind::Program, &active).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "ActiveInput");
+    }
+
+    #[test]
+    fn raw_function_drops_the_function_word() {
+        let params = ActionParams {
+            raw: "FUNCTION Play&Input=XXX".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = command_for(ActionKind::Raw, &params).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "Play");
+        assert_eq!(query.as_deref(), Some("Input=XXX"));
+        let plain = ActionParams {
+            raw: "Play&Input=XXX".into(),
+            ..ActionParams::default()
+        };
+        let Command::Function { name, query } = command_for(ActionKind::Raw, &plain).unwrap()
+        else {
+            panic!("function");
+        };
+        assert_eq!(name, "Play");
+        assert_eq!(query.as_deref(), Some("Input=XXX"));
+    }
+
+    #[test]
+    fn play_title_is_remaining_time_when_duration_is_known() {
+        let mut state = loaded();
+        state.input_position.insert(1, 15_000);
+        state.input_duration.insert(1, 60_000);
+        let params = ActionParams {
+            input: "1".into(),
+            ..ActionParams::default()
+        };
+        assert_eq!(title_for(ActionKind::Play, &params, &state), "00:45");
+        let missing = ActionParams {
+            input: "9".into(),
+            ..ActionParams::default()
+        };
+        assert_eq!(title_for(ActionKind::Play, &missing, &state), "9");
+    }
+
+    #[test]
+    fn release_and_rotate_use_custom_functions() {
+        let release = ShortcutCall {
+            function_name: "ReplayMarkOut".into(),
+            channel: "A".into(),
+            ..ShortcutCall::default()
+        };
+        let Command::Function { name, query } = release_command(&release).unwrap() else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayMarkOut");
+        assert_eq!(query.as_deref(), Some("Channel=A"));
+        assert!(release_command(&ShortcutCall::default()).is_none());
+
+        let mut params = ActionParams::default();
+        params.rotate_up.function_name = "ReplaySelectNextEvent".into();
+        params.rotate_down.function_name = "ReplayChangeSpeed".into();
+        let up = rotate_commands(ActionKind::ReplayJog, &params, &loaded(), 3);
+        assert_eq!(up.len(), 3);
+        let down = rotate_commands(ActionKind::ReplayJog, &params, &loaded(), -2);
+        assert_eq!(down.len(), 1);
+        let Command::Function { name, query } = &down[0] else {
+            panic!("function");
+        };
+        assert_eq!(name, "ReplayChangeSpeed");
+        assert_eq!(query.as_deref(), Some("Value=-2"));
+    }
+
+    #[test]
+    fn special_input_tokens_follow_the_live_slot() {
+        let mut state = loaded();
+        state.dynamic[0] = "2".into();
+        state.input_playing.insert(1, true);
+        let active = ActionParams {
+            input: "Active".into(),
+            ..ActionParams::default()
+        };
+        assert_eq!(
+            segment_for(ActionKind::Play, &active, &state, true),
+            SegmentState::Active
+        );
+        let preview = ActionParams {
+            input: "Preview".into(),
+            ..ActionParams::default()
+        };
+        assert_eq!(
+            segment_for(ActionKind::Preview, &preview, &state, true),
+            SegmentState::Active
+        );
+        let dynamic = ActionParams {
+            input: "Dynamic1".into(),
+            ..ActionParams::default()
+        };
+        assert_eq!(title_for(ActionKind::Program, &dynamic, &state), "2");
     }
 }

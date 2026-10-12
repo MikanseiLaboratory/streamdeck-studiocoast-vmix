@@ -25,6 +25,7 @@ struct LiveKey {
     title: String,
     last_layout: Option<String>,
     last_feedback: Option<String>,
+    last_face: Option<String>,
     multi: bool,
 }
 
@@ -34,6 +35,7 @@ struct Runtime {
     inspectors: Mutex<HashSet<String>>,
     global: Mutex<GlobalSettings>,
     pending: Mutex<HashMap<String, String>>,
+    last_inputs: Mutex<Option<String>>,
     /// Serializes the provisional localhost connection with the saved settings.
     connect: Mutex<()>,
     /// Set once Stream Deck has delivered global settings. Until then, do not save defaults.
@@ -62,6 +64,7 @@ impl AppState {
                 inspectors: Mutex::new(HashSet::new()),
                 global: Mutex::new(GlobalSettings::default()),
                 pending: Mutex::new(HashMap::new()),
+                last_inputs: Mutex::new(None),
                 connect: Mutex::new(()),
                 settings_applied: AtomicBool::new(false),
             }),
@@ -77,10 +80,10 @@ impl AppState {
                 false
             } else {
                 if std::env::var_os("RUST_LOG").is_none() {
-                    std::env::set_var("RUST_LOG", "info");
+                    std::env::set_var("RUST_LOG", "warn");
                 }
                 streamdeck_plugin::init_tracing(sender.clone(), "dev.mikanseilaboratory.vmix");
-                tracing::info!("vmix plugin ready");
+                tracing::debug!("vmix plugin ready");
                 let _ = sender.get_global_settings(None);
                 *current = Some(sender);
                 true
@@ -96,7 +99,7 @@ impl AppState {
                 if state.runtime.settings_applied.load(Ordering::SeqCst) {
                     return;
                 }
-                tracing::info!(attempt, "requesting vMix global settings again");
+                tracing::debug!(attempt, "requesting vMix global settings again");
                 let Some(sender) = state.runtime.sender.lock().await.clone() else {
                     return;
                 };
@@ -134,7 +137,7 @@ impl AppState {
         if same {
             return;
         }
-        tracing::info!(
+        tracing::debug!(
             ids = ?ids,
             "connecting visible vMix targets at 127.0.0.1:8099 before saved settings arrive"
         );
@@ -162,13 +165,13 @@ impl AppState {
     pub async fn apply_global(&self, mut settings: GlobalSettings) {
         let _guard = self.runtime.connect.lock().await;
         self.runtime.settings_applied.store(true, Ordering::SeqCst);
-        tracing::info!(
+        tracing::debug!(
             seeded = settings.seeded,
             instances = settings.instances.len(),
             "received vMix settings"
         );
         for instance in &settings.instances {
-            tracing::info!(
+            tracing::debug!(
                 id = %instance.id,
                 name = %instance.name,
                 host = %instance.host,
@@ -181,7 +184,7 @@ impl AppState {
         if !settings.seeded {
             if settings.instances.is_empty() {
                 settings.instances.push(localhost_instance());
-                tracing::info!("registered default Localhost vMix at 127.0.0.1:8099");
+                tracing::debug!("registered default Localhost vMix at 127.0.0.1:8099");
             }
             settings.seeded = true;
             persist = true;
@@ -238,6 +241,7 @@ impl AppState {
                 title: String::new(),
                 last_layout: None,
                 last_feedback: None,
+                last_face: None,
                 multi,
             },
         );
@@ -285,7 +289,15 @@ impl AppState {
         let context = context.to_string();
         let state = self.clone();
         tokio::spawn(async move {
-            state.run_dial_down(&context).await;
+            state.run_touch(&context).await;
+        });
+    }
+
+    pub fn release(&self, context: &str) {
+        let context = context.to_string();
+        let state = self.clone();
+        tokio::spawn(async move {
+            state.run_release(&context).await;
         });
     }
 
@@ -420,11 +432,12 @@ impl AppState {
                                 {
                                     key.segments
                                         .insert(status.id.clone(), SegmentState::Unavailable);
+                                    key.last_face = None;
                                 }
                             }
                         }
+                        self.paint(&context).await;
                     }
-                    self.paint(&context).await;
                 }
                 self.push_status_to_open_inspectors().await;
             }
@@ -504,7 +517,7 @@ impl AppState {
         for id in &targets {
             let params = snapshot.settings.params_for(id);
             let cached = self.pool.state(id).unwrap_or_default();
-            if let Some(command) = ops::rotate_command(snapshot.kind, params, &cached, ticks) {
+            for command in ops::rotate_commands(snapshot.kind, params, &cached, ticks) {
                 let _ = self.pool.send(id, command);
             }
         }
@@ -524,6 +537,34 @@ impl AppState {
         }
     }
 
+    async fn run_touch(&self, context: &str) {
+        let Some(snapshot) = self.key_snapshot(context).await else {
+            return;
+        };
+        let targets = self.targets_for(&snapshot.settings).await;
+        for id in &targets {
+            let params = snapshot.settings.params_for(id);
+            let Some(command) = ops::touch_command(snapshot.kind, params) else {
+                continue;
+            };
+            let _ = self.pool.send(id, command);
+        }
+    }
+
+    async fn run_release(&self, context: &str) {
+        let Some(snapshot) = self.key_snapshot(context).await else {
+            return;
+        };
+        let targets = self.targets_for(&snapshot.settings).await;
+        for id in &targets {
+            let params = snapshot.settings.params_for(id);
+            let Some(command) = ops::release_command(&params.release) else {
+                continue;
+            };
+            let _ = self.pool.send(id, command);
+        }
+    }
+
     async fn dispatch_inspector(&self, context: &str, payload: Value) {
         match payload.get("type").and_then(Value::as_str) {
             Some("reconnect") => {
@@ -533,12 +574,12 @@ impl AppState {
             }
             Some("globalSettings") => {
                 if let Some(settings) = payload.get("settings") {
-                    tracing::info!("property inspector delivered vMix settings");
+                    tracing::debug!("property inspector delivered vMix settings");
                     self.apply_global_value(settings).await;
                 }
             }
             Some("ready") => {
-                tracing::info!(context, "property inspector ready");
+                tracing::debug!(context, "property inspector ready");
                 let context = context.to_string();
                 self.runtime.inspectors.lock().await.insert(context.clone());
                 self.bootstrap_localhost().await;
@@ -570,6 +611,7 @@ impl AppState {
                 title: key.title.clone(),
                 last_layout: key.last_layout.clone(),
                 last_feedback: key.last_feedback.clone(),
+                last_face: key.last_face.clone(),
                 multi: key.multi,
             })
     }
@@ -587,18 +629,21 @@ impl AppState {
             .iter()
             .map(|id| {
                 let config = configs.iter().find(|config| config.id == *id);
+                let state = key
+                    .segments
+                    .get(id)
+                    .copied()
+                    .unwrap_or(SegmentState::Unavailable);
+                let instance_color = config
+                    .map(|config| config.color.clone())
+                    .unwrap_or_else(|| "#4c8dff".into());
+                let params = key.settings.params_for(id);
                 Segment {
                     label: config
                         .map(|config| config.name.clone())
                         .unwrap_or_else(|| id.clone()),
-                    color: config
-                        .map(|config| config.color.clone())
-                        .unwrap_or_else(|| "#4c8dff".into()),
-                    state: key
-                        .segments
-                        .get(id)
-                        .copied()
-                        .unwrap_or(SegmentState::Unavailable),
+                    color: render::bar_color(key.kind, &params.active_color, state, &instance_color),
+                    state,
                 }
             })
             .collect();
@@ -634,6 +679,10 @@ impl AppState {
             }
             return;
         }
+        let face = render::key_face_token(&visual, &key.title, &foreground);
+        if key.last_face.as_deref() == Some(face.as_str()) {
+            return;
+        }
         let image = render::key_image(key.kind, &visual, &foreground);
         if sender
             .set_image(context, Some(&image), Target::HardwareAndSoftware, None)
@@ -647,6 +696,9 @@ impl AppState {
         if key.kind.has_toggle_state() {
             let active = render::hardware_state(visual.iter().map(|segment| segment.state));
             let _ = sender.set_state(context, active);
+        }
+        if let Some(live) = self.runtime.keys.lock().await.get_mut(context) {
+            live.last_face = Some(face);
         }
     }
 
@@ -678,7 +730,7 @@ impl AppState {
     }
 
     pub async fn inspector_opened(&self, context: &str) {
-        tracing::info!(context, "property inspector opened");
+        tracing::debug!(context, "property inspector opened");
         let context = context.to_string();
         self.runtime.inspectors.lock().await.insert(context.clone());
         self.push_status(&context).await;
@@ -691,20 +743,31 @@ impl AppState {
 
     async fn push_status(&self, context: &str) {
         let instances = self.pool.statuses();
-        tracing::info!(context, count = instances.len(), "push vmix status");
+        tracing::debug!(context, count = instances.len(), "push vmix status");
         self.send_inspector(context, &json!({"type": "status", "instances": instances}))
             .await;
     }
 
     async fn push_inputs(&self) {
         let contexts = self.open_inspectors().await;
-        self.push_inputs_to(&contexts).await;
-    }
-
-    async fn push_inputs_to(&self, contexts: &[String]) {
         if contexts.is_empty() {
             return;
         }
+        let payload = self.input_payload().await;
+        let encoded = payload.to_string();
+        {
+            let mut last = self.runtime.last_inputs.lock().await;
+            if last.as_deref() == Some(encoded.as_str()) {
+                return;
+            }
+            *last = Some(encoded);
+        }
+        for context in contexts {
+            self.send_inspector(&context, &payload).await;
+        }
+    }
+
+    async fn input_payload(&self) -> Value {
         let mut items = Vec::new();
         for config in self.pool.configs() {
             let Some(state) = self.pool.state(&config.id) else {
@@ -724,23 +787,24 @@ impl AppState {
                 .collect();
             let mut mixes: Vec<u8> = state.mixes_present.iter().copied().collect();
             mixes.sort_unstable();
-            items.push(json!({"id": config.id, "inputs": inputs, "mixes": mixes}));
+            items.push(json!({
+                "id": config.id,
+                "inputs": inputs,
+                "mixes": mixes,
+                "dynamic": state.dynamic,
+            }));
         }
-        let input_count: usize = items
-            .iter()
-            .map(|item| {
-                item.get("inputs")
-                    .and_then(Value::as_array)
-                    .map(Vec::len)
-                    .unwrap_or(0)
-            })
-            .sum();
-        tracing::info!(
-            contexts = contexts.len(),
-            inputs = input_count,
-            "push vmix inputs"
-        );
-        let payload = json!({"type": "inputs", "items": items});
+        json!({"type": "inputs", "items": items})
+    }
+
+    async fn push_inputs_to(&self, contexts: &[String]) {
+        if contexts.is_empty() {
+            return;
+        }
+        let payload = self.input_payload().await;
+        let encoded = payload.to_string();
+        tracing::debug!(contexts = contexts.len(), "push vmix inputs");
+        *self.runtime.last_inputs.lock().await = Some(encoded);
         for context in contexts {
             self.send_inspector(context, &payload).await;
         }
@@ -846,7 +910,7 @@ pub struct GlobalHook {
 #[async_trait]
 impl PluginLifecycle for GlobalHook {
     async fn on_did_receive_global_settings(&mut self, settings: &Value) -> Result<()> {
-        tracing::info!(payload = %summarize_settings(settings), "didReceiveGlobalSettings");
+        tracing::debug!(payload = %summarize_settings(settings), "didReceiveGlobalSettings");
         self.state.apply_global_value(settings).await;
         Ok(())
     }

@@ -18,7 +18,33 @@ rateMode: string,
 /**
  * `bus` is SetVolumeBusMixer*. `channel` is SetVolumeChannelMixer*.
  */
-mixerMode: string, };
+mixerMode: string, 
+/**
+ * `cutDirect`, `cut`, or `activeInput`. Non-main mixes never send CutDirect.
+ */
+programMode: string, 
+/**
+ * Bar color while the key is active. Empty keeps the instance color.
+ */
+activeColor: string, 
+/**
+ * Sent on key up. An empty function name sends nothing.
+ */
+release: ShortcutCall, 
+/**
+ * Dial touch. An empty function name keeps the built-in press.
+ */
+touch: ShortcutCall, 
+/**
+ * Clockwise dial turn. Empty keeps the built-in rotate.
+ */
+rotateUp: ShortcutCall, 
+/**
+ * Counter-clockwise dial turn. Empty keeps the built-in rotate.
+ */
+rotateDown: ShortcutCall, };
+
+export type ShortcutCall = { functionName: string, input: string, value: string, channel: string, mix: number, durationMs: string, selectedName: string, extra: string, };
 
 export type AdvancedSettings = { longPress: boolean, longPressMs: number, };
 

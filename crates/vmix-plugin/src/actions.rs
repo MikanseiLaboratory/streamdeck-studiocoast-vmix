@@ -51,6 +51,15 @@ macro_rules! vmix_key {
                 Ok(())
             }
 
+            async fn on_key_up(
+                &mut self,
+                _payload: &ActionPayload,
+                ctx: &ActionContext<'_, Self::Settings, Self::State>,
+            ) -> Result<()> {
+                ctx.state().release(&ctx.identity().context);
+                Ok(())
+            }
+
             async fn on_property_inspector_did_appear(
                 &mut self,
                 ctx: &ActionContext<'_, Self::Settings, Self::State>,

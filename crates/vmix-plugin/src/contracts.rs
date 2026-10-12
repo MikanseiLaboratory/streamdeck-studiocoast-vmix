@@ -133,6 +133,29 @@ fn default_fg() -> String {
     "#f4f7fb".into()
 }
 
+/// One vMix shortcut chosen in the property inspector.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, rename_all = "camelCase")]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutCall {
+    #[serde(default)]
+    pub function_name: String,
+    #[serde(default)]
+    pub input: String,
+    #[serde(default)]
+    pub value: String,
+    #[serde(default)]
+    pub channel: String,
+    #[serde(default)]
+    pub mix: u8,
+    #[serde(default)]
+    pub duration_ms: String,
+    #[serde(default)]
+    pub selected_name: String,
+    #[serde(default)]
+    pub extra: String,
+}
+
 impl Default for GlobalSettings {
     fn default() -> Self {
         Self {
@@ -228,6 +251,24 @@ pub struct ActionParams {
     /// `bus` is SetVolumeBusMixer*. `channel` is SetVolumeChannelMixer*.
     #[serde(default = "default_mixer_mode")]
     pub mixer_mode: String,
+    /// `cutDirect`, `cut`, or `activeInput`. Non-main mixes never send CutDirect.
+    #[serde(default = "default_program_mode")]
+    pub program_mode: String,
+    /// Bar color while the key is active. Empty keeps the instance color.
+    #[serde(default)]
+    pub active_color: String,
+    /// Sent on key up. An empty function name sends nothing.
+    #[serde(default)]
+    pub release: ShortcutCall,
+    /// Dial touch. An empty function name keeps the built-in press.
+    #[serde(default)]
+    pub touch: ShortcutCall,
+    /// Clockwise dial turn. Empty keeps the built-in rotate.
+    #[serde(default)]
+    pub rotate_up: ShortcutCall,
+    /// Counter-clockwise dial turn. Empty keeps the built-in rotate.
+    #[serde(default)]
+    pub rotate_down: ShortcutCall,
 }
 
 fn default_cut() -> String {
@@ -263,6 +304,9 @@ fn default_rate_mode() -> String {
 fn default_mixer_mode() -> String {
     "bus".into()
 }
+fn default_program_mode() -> String {
+    "cutDirect".into()
+}
 
 impl Default for ActionParams {
     fn default() -> Self {
@@ -290,6 +334,12 @@ impl Default for ActionParams {
             step: default_step(),
             rate_mode: default_rate_mode(),
             mixer_mode: default_mixer_mode(),
+            program_mode: default_program_mode(),
+            active_color: String::new(),
+            release: ShortcutCall::default(),
+            touch: ShortcutCall::default(),
+            rotate_up: ShortcutCall::default(),
+            rotate_down: ShortcutCall::default(),
         }
     }
 }
@@ -324,5 +374,6 @@ export_ts!(TargetSelector);
 export_ts!(GlobalSettings);
 export_ts!(CommonSettings);
 export_ts!(AdvancedSettings);
+export_ts!(ShortcutCall);
 export_ts!(ActionParams);
 export_ts!(ActionSettings);

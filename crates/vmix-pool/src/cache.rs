@@ -1,4 +1,6 @@
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 
 use vmix_rs::vmix_core::{self, Vmix};
 use vmix_rs::vmix_tcp::acts::ActivatorsData;
@@ -57,6 +59,8 @@ pub struct VmixState {
     pub replay_speed_b: Option<f32>,
     pub inputs: Vec<CachedInput>,
     pub mixes_present: HashSet<u8>,
+    /// vMix dynamic input slots 1–4, as stored in XML (`input1`..`input4`).
+    pub dynamic: [String; 4],
 }
 
 /// ACTS/XML volume is amplitude. Values above 1.0 are the XML 0–100 scale.
@@ -93,6 +97,106 @@ impl VmixState {
     pub fn mix_available(&self, user_mix: u8) -> bool {
         user_mix == 0 || self.mixes_present.contains(&user_mix)
     }
+
+    /// Resolve a normal input or a live token (`Active`, `Preview`, `Dynamic1`–`Dynamic4`).
+    pub fn resolve_spec(&self, spec: &str, mix: u8) -> Option<u16> {
+        let spec = spec.trim();
+        if spec.is_empty() {
+            return None;
+        }
+        match spec.to_ascii_lowercase().as_str() {
+            "active" | "program" => self.program.get(&mix).copied().filter(|input| *input > 0),
+            "preview" => self.preview.get(&mix).copied().filter(|input| *input > 0),
+            "dynamic1" => self.resolve_dynamic(0),
+            "dynamic2" => self.resolve_dynamic(1),
+            "dynamic3" => self.resolve_dynamic(2),
+            "dynamic4" => self.resolve_dynamic(3),
+            _ => self.resolve_input(spec),
+        }
+    }
+
+    fn resolve_dynamic(&self, index: usize) -> Option<u16> {
+        let raw = self.dynamic.get(index)?.trim();
+        if raw.is_empty() {
+            None
+        } else {
+            self.resolve_input(raw).filter(|input| *input > 0)
+        }
+    }
+}
+
+/// Stable signature of the fields keys and the input list display.
+/// Audio meters are not stored, so a meter-only XML poll does not change this.
+pub fn display_fingerprint(state: &VmixState) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    hash_map(&state.program, &mut hasher);
+    hash_map(&state.preview, &mut hasher);
+    hash_map(&state.overlays, &mut hasher);
+    state.fade_to_black.hash(&mut hasher);
+    state.recording.hash(&mut hasher);
+    state.streaming.hash(&mut hasher);
+    state.external.hash(&mut hasher);
+    state.fullscreen.hash(&mut hasher);
+    state.replay_playing.hash(&mut hasher);
+    state.multi_corder.hash(&mut hasher);
+    hash_map(&state.input_audio, &mut hasher);
+    state.master_audio.hash(&mut hasher);
+    hash_map(&state.bus_audio, &mut hasher);
+    hash_map(&state.input_solo, &mut hasher);
+    hash_map(&state.bus_solo, &mut hasher);
+    hash_map(&state.input_bus, &mut hasher);
+    hash_map(&state.input_master_audio, &mut hasher);
+    hash_map(&state.input_playing, &mut hasher);
+    hash_f32_map(&state.input_volume, &mut hasher);
+    state.master_volume.to_bits().hash(&mut hasher);
+    hash_f32_map(&state.bus_volume, &mut hasher);
+    hash_f32_map(&state.input_headphones, &mut hasher);
+    state.master_headphones.to_bits().hash(&mut hasher);
+    hash_f32_map(&state.input_gain, &mut hasher);
+    hash_f32_map(&state.input_rate, &mut hasher);
+    hash_map(&state.input_position, &mut hasher);
+    hash_map(&state.input_duration, &mut hasher);
+    hash_opt_f32(state.replay_speed, &mut hasher);
+    hash_opt_f32(state.replay_speed_a, &mut hasher);
+    hash_opt_f32(state.replay_speed_b, &mut hasher);
+    for input in &state.inputs {
+        input.number.hash(&mut hasher);
+        input.key.hash(&mut hasher);
+        input.title.hash(&mut hasher);
+        input.short_title.hash(&mut hasher);
+        input.selected_index.hash(&mut hasher);
+    }
+    let mut mixes: Vec<u8> = state.mixes_present.iter().copied().collect();
+    mixes.sort_unstable();
+    mixes.hash(&mut hasher);
+    state.dynamic.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn hash_map<K, V>(map: &HashMap<K, V>, hasher: &mut DefaultHasher)
+where
+    K: Ord + Hash,
+    V: Hash,
+{
+    let mut items: Vec<_> = map.iter().collect();
+    items.sort_by(|left, right| left.0.cmp(right.0));
+    for (key, value) in items {
+        key.hash(hasher);
+        value.hash(hasher);
+    }
+}
+
+fn hash_f32_map<K: Ord + Hash>(map: &HashMap<K, f32>, hasher: &mut DefaultHasher) {
+    let mut items: Vec<_> = map.iter().collect();
+    items.sort_by(|left, right| left.0.cmp(right.0));
+    for (key, value) in items {
+        key.hash(hasher);
+        value.to_bits().hash(hasher);
+    }
+}
+
+fn hash_opt_f32(value: Option<f32>, hasher: &mut DefaultHasher) {
+    value.map(f32::to_bits).hash(hasher);
 }
 
 /// Apply one ACTS payload. Returns the activator name used for key filtering.
@@ -498,6 +602,12 @@ fn merge_xml(state: &mut VmixState, vmix: &Vmix) {
             selected_index: input.selected_index.clone(),
         });
     }
+    state.dynamic = [
+        vmix.dynamic.input1.clone(),
+        vmix.dynamic.input2.clone(),
+        vmix.dynamic.input3.clone(),
+        vmix.dynamic.input4.clone(),
+    ];
     state.master_volume = (vmix.audio.master.volume as f32 / 100.0).clamp(0.0, 1.0);
     if let Some(headphones) = vmix.audio.master.headphones_volume {
         state.master_headphones = (headphones as f32 / 100.0).clamp(0.0, 1.0);
@@ -583,6 +693,21 @@ mod tests {
         assert!((state.replay_speed.unwrap_or(0.0) - 0.25).abs() < 0.001);
         assert!((state.replay_speed_a.unwrap_or(0.0) - 0.5).abs() < 0.001);
         assert!((state.master_headphones - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn dynamic_slots_resolve_and_do_not_change_when_only_the_copy_is_reread() {
+        let xml = r#"<vmix><version>29.0.0.0</version><edition>4K</edition><inputs><input key="cam-key" number="1" type="Colour" title="Cam" shortTitle="Cam" state="Paused" position="0" duration="0" loop="False" muted="False" volume="80"></input><input key="guest-key" number="2" type="Colour" title="Guest" shortTitle="Guest" state="Paused" position="0" duration="0" loop="False" muted="True" volume="100"></input></inputs><overlays><overlay number="1"></overlay></overlays><preview>2</preview><active>1</active><fadeToBlack>False</fadeToBlack><transitions><transition number="1" effect="Fade" duration="500"></transition></transitions><recording>False</recording><external>False</external><streaming>False</streaming><playList>False</playList><multiCorder>False</multiCorder><fullscreen>False</fullscreen><audio><master volume="100" muted="False" meterF1="0" meterF2="0"></master></audio><dynamic><input1>2</input1><input2></input2><input3>Cam</input3><input4></input4><value1></value1><value2></value2><value3></value3><value4></value4></dynamic></vmix>"#;
+        let mut state = VmixState::default();
+        apply_xml(&mut state, xml).unwrap();
+        assert_eq!(state.resolve_spec("Active", 0), Some(1));
+        assert_eq!(state.resolve_spec("Preview", 0), Some(2));
+        assert_eq!(state.resolve_spec("Dynamic1", 0), Some(2));
+        assert_eq!(state.resolve_spec("Dynamic3", 0), Some(1));
+        assert_eq!(state.resolve_spec("Dynamic2", 0), None);
+        let first = display_fingerprint(&state);
+        apply_xml(&mut state, xml).unwrap();
+        assert_eq!(display_fingerprint(&state), first);
     }
 
     #[test]
