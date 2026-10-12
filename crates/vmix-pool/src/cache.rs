@@ -37,6 +37,9 @@ pub struct VmixState {
     pub fullscreen: bool,
     pub replay_playing: bool,
     pub multi_corder: bool,
+    pub playlist: bool,
+    /// Input number to whether that input is set to loop.
+    pub input_loop: HashMap<u16, bool>,
     pub input_audio: HashMap<u16, bool>,
     pub master_audio: bool,
     pub bus_audio: HashMap<char, bool>,
@@ -139,6 +142,8 @@ pub fn display_fingerprint(state: &VmixState) -> u64 {
     state.fullscreen.hash(&mut hasher);
     state.replay_playing.hash(&mut hasher);
     state.multi_corder.hash(&mut hasher);
+    state.playlist.hash(&mut hasher);
+    hash_map(&state.input_loop, &mut hasher);
     hash_map(&state.input_audio, &mut hasher);
     state.master_audio.hash(&mut hasher);
     hash_map(&state.bus_audio, &mut hasher);
@@ -485,6 +490,10 @@ fn apply_replay_speeds(state: &mut VmixState, replay: &vmix_core::Replay) {
 }
 
 fn apply_xml_extras(state: &mut VmixState, xml: &str) {
+    state.input_loop.clear();
+    if let Some(on) = xml_text_flag(xml, "playList") {
+        state.playlist = on;
+    }
     let mut rest = xml;
     while let Some(start) = rest.find("<input ") {
         let tag = &rest[start..];
@@ -493,6 +502,11 @@ fn apply_xml_extras(state: &mut VmixState, xml: &str) {
         if let Some(number) = xml_attr(tag, "number").and_then(|value| value.parse::<u16>().ok()) {
             if let Some(rate) = xml_attr(tag, "rate").and_then(|value| value.parse::<f32>().ok()) {
                 state.input_rate.insert(number, rate);
+            }
+            if let Some(looped) = xml_attr(tag, "loop") {
+                state
+                    .input_loop
+                    .insert(number, looped.eq_ignore_ascii_case("true"));
             }
         }
         rest = &rest[start + 1..];
@@ -511,6 +525,13 @@ fn apply_xml_extras(state: &mut VmixState, xml: &str) {
             state.replay_speed_b = Some(speed);
         }
     }
+}
+
+fn xml_text_flag(xml: &str, name: &str) -> Option<bool> {
+    let open = format!("<{name}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find('<')?;
+    Some(xml[start..start + end].eq_ignore_ascii_case("true"))
 }
 
 fn xml_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
@@ -693,6 +714,14 @@ mod tests {
         assert!((state.replay_speed.unwrap_or(0.0) - 0.25).abs() < 0.001);
         assert!((state.replay_speed_a.unwrap_or(0.0) - 0.5).abs() < 0.001);
         assert!((state.master_headphones - 0.25).abs() < 0.001);
+        assert!(!state.input_loop.get(&1).copied().unwrap_or(true));
+        assert!(!state.playlist);
+        let running = xml
+            .replace("loop=\"False\"", "loop=\"True\"")
+            .replace("<playList>False</playList>", "<playList>True</playList>");
+        apply_xml(&mut state, &running).unwrap();
+        assert_eq!(state.input_loop.get(&1), Some(&true));
+        assert!(state.playlist);
     }
 
     #[test]

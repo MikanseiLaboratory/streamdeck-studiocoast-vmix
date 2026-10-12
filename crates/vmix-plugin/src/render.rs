@@ -170,6 +170,28 @@ fn icon_path(kind: ActionKind) -> &'static str {
         ActionKind::Play => r#"<path d="M20 16l28 16-28 16z"/>"#,
         ActionKind::List => r#"<path d="M16 18h32M16 32h32M16 46h32"/>"#,
         ActionKind::Title => r#"<path d="M12 20h40M20 20v24M44 20v24"/>"#,
+        ActionKind::Loop => r#"<path d="M20 32a12 12 0 1 0 4-8M20 18v8h8"/>"#,
+        ActionKind::Playlist => r#"<path d="M16 18h32M16 32h32M16 46h20"/>"#,
+        ActionKind::Restart => r#"<path d="M16 18h8v28l20-14zM48 16v32"/>"#,
+        ActionKind::QuickPlay => r#"<path d="M14 32h22M28 20l12 12-12 12"/>"#,
+        ActionKind::Snapshot => {
+            r#"<rect x="12" y="20" width="40" height="28" rx="4"/><circle cx="32" cy="34" r="8"/>"#
+        }
+        ActionKind::Go => r#"<path d="M18 16h18l10 16-10 16H18"/>"#,
+        ActionKind::Countdown => r#"<circle cx="32" cy="32" r="16"/><path d="M32 22v12l8 6"/>"#,
+        ActionKind::Browser => {
+            r#"<circle cx="32" cy="32" r="16"/><path d="M16 32h32M32 16c6 6 6 26 0 32M32 16c-6 6-6 26 0 32"/>"#
+        }
+        ActionKind::Script => r#"<path d="M18 18h28M18 32h20M18 46h24"/>"#,
+        ActionKind::Preset => r#"<path d="M12 24h16l6 6h18v20H12z"/>"#,
+        ActionKind::PreviewStep => {
+            r#"<rect x="8" y="18" width="36" height="28" rx="4"/><path d="M48 24l8 8-8 8"/>"#
+        }
+        ActionKind::Ptz => r#"<path d="M32 12v40M12 32h40"/>"#,
+        ActionKind::ReplayCamera => r#"<path d="M16 32a16 16 0 1 0 4-10M16 14v10h10M46 20v24"/>"#,
+        ActionKind::AudioAuto => r#"<path d="M16 24h10l14-10v36L26 40H16zM46 22v20"/>"#,
+        ActionKind::SoloAllOff => r#"<circle cx="32" cy="32" r="14"/><path d="M20 44l24-24"/>"#,
+        ActionKind::DataSource => r#"<path d="M16 20h32v8H16zM16 32h32v8H16zM16 44h20"/>"#,
         ActionKind::Shortcut => r#"<path d="M16 40l12-24h8l12 24M22 32h20"/>"#,
         ActionKind::Raw | ActionKind::RawDial => {
             r#"<path d="M20 16l-10 16 10 16M44 16l10 16-10 16"/>"#

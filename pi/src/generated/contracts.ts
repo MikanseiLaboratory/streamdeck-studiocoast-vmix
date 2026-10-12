@@ -24,6 +24,10 @@ mixerMode: string,
  */
 programMode: string, 
 /**
+ * Mode for a direct action, such as Loop, Playlist, PTZ, or Browser.
+ */
+commandMode: string, 
+/**
  * Bar color while the key is active. Empty keeps the instance color.
  */
 activeColor: string, 

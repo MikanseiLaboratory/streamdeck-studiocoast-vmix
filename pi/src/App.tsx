@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   useGlobalSettings,
   usePluginMessage,
@@ -45,6 +45,7 @@ const emptyParams = (): ActionParams => ({
   rateMode: "rate",
   mixerMode: "bus",
   programMode: "cutDirect",
+  commandMode: "",
   activeColor: "",
   release: emptyCall(),
   rawRotateUp: "",
@@ -93,7 +94,25 @@ const TRANSITION_BUTTONS = ["Transition1", "Transition2", "Transition3", "Transi
 const STINGERS = ["Stinger1", "Stinger2", "Stinger3", "Stinger4", "Stinger5", "Stinger6", "Stinger7", "Stinger8"];
 const EFFECTS = ["Cut", "Fade", "Merge", ...TRANSITION_BUTTONS, ...STINGERS];
 const DIALS = ["volume", "replayjog", "gain", "headphones", "mixer", "rate", "replayspeed", "position", "rawdial"];
-const TOGGLES = ["overlay", "fadetoblack", "recording", "streaming", "external", "multicorder", "fullscreen", "replay", "mute", "solo", "bussend", "play", "list"];
+const DIRECT = new Set([
+  "loop",
+  "playlist",
+  "restart",
+  "quickplay",
+  "snapshot",
+  "go",
+  "countdown",
+  "browser",
+  "script",
+  "preset",
+  "previewstep",
+  "ptz",
+  "replaycamera",
+  "audioauto",
+  "soloalloff",
+  "datasource"
+]);
+const TOGGLES = ["overlay", "fadetoblack", "recording", "streaming", "external", "multicorder", "fullscreen", "replay", "mute", "solo", "bussend", "play", "list", "loop", "playlist"];
 
 export function App() {
   const deck = useStreamDeck();
@@ -463,6 +482,18 @@ function ActionFields({
       </>
     );
   }
+  if (DIRECT.has(kind)) {
+    return (
+      <DirectFields
+        kind={kind}
+        params={params}
+        inputs={inputs}
+        dynamic={dynamic}
+        onChange={onChange}
+        release={release}
+      />
+    );
+  }
   if (kind === "replayjog" || kind === "replayspeed") {
     return (
       <>
@@ -614,6 +645,172 @@ function ActionFields({
 function hidesDuration(effect: string) {
   const name = effect.trim();
   return TRANSITION_BUTTONS.includes(name) || STINGERS.includes(name);
+}
+
+function DirectFields({
+  kind,
+  params,
+  inputs,
+  dynamic,
+  onChange,
+  release
+}: {
+  kind: string;
+  params: ActionParams;
+  inputs: LiveInput[];
+  dynamic: string[];
+  onChange: (params: ActionParams) => void;
+  release: ReactNode;
+}) {
+  const mode = (fallback: string) => params.commandMode || fallback;
+  const setMode = (commandMode: string) => onChange({ ...params, commandMode });
+  const input = <InputField params={params} inputs={inputs} dynamic={dynamic} onChange={onChange} />;
+  const color = TOGGLES.includes(kind) ? (
+    <TextField label="Active color" value={params.activeColor} onChange={(activeColor) => onChange({ ...params, activeColor })} />
+  ) : null;
+  if (kind === "loop" || kind === "audioauto") {
+    return (
+      <>
+        {input}
+        <SelectField label="Mode" value={mode("toggle")} options={["toggle", "on", "off"]} labels={["Toggle", "On", "Off"]} onChange={setMode} />
+        {color}
+        {release}
+      </>
+    );
+  }
+  if (kind === "playlist") {
+    return (
+      <>
+        <SelectField
+          label="Action"
+          value={mode("start")}
+          options={["start", "stop", "next", "previous"]}
+          labels={["Start", "Stop", "Next", "Previous"]}
+          onChange={setMode}
+        />
+        {color}
+        {release}
+      </>
+    );
+  }
+  if (kind === "restart" || kind === "quickplay" || kind === "go") {
+    return (
+      <>
+        {input}
+        {release}
+      </>
+    );
+  }
+  if (kind === "snapshot") {
+    return (
+      <>
+        <SelectField label="Source" value={mode("output")} options={["output", "input"]} labels={["Output", "Input"]} onChange={setMode} />
+        {params.commandMode === "input" && input}
+        <TextField label="Filename" value={params.value} onChange={(value) => onChange({ ...params, value })} />
+        {release}
+      </>
+    );
+  }
+  if (kind === "countdown") {
+    return (
+      <>
+        {input}
+        <SelectField
+          label="Action"
+          value={mode("start")}
+          options={["start", "stop", "pause", "suspend"]}
+          labels={["Start", "Stop", "Pause", "Suspend"]}
+          onChange={setMode}
+        />
+        <TextField label="Selected name" value={params.selectedName} onChange={(selectedName) => onChange({ ...params, selectedName })} />
+        {release}
+      </>
+    );
+  }
+  if (kind === "browser") {
+    return (
+      <>
+        {input}
+        <SelectField
+          label="Action"
+          value={mode("reload")}
+          options={["reload", "back", "forward", "navigate"]}
+          labels={["Reload", "Back", "Forward", "Navigate"]}
+          onChange={setMode}
+        />
+        {params.commandMode === "navigate" && <TextField label="URL" value={params.value} onChange={(value) => onChange({ ...params, value })} />}
+        {release}
+      </>
+    );
+  }
+  if (kind === "script") {
+    return (
+      <>
+        <SelectField label="Action" value={mode("start")} options={["start", "stop", "stopall"]} labels={["Start", "Stop", "Stop all"]} onChange={setMode} />
+        {params.commandMode !== "stopall" && <TextField label="Script" value={params.value} onChange={(value) => onChange({ ...params, value })} />}
+        {release}
+      </>
+    );
+  }
+  if (kind === "preset") {
+    return (
+      <>
+        <SelectField label="Action" value={mode("last")} options={["last", "open", "save"]} labels={["Last", "Open", "Save"]} onChange={setMode} />
+        {params.commandMode !== "" && params.commandMode !== "last" && (
+          <TextField label="Filename" value={params.value} onChange={(value) => onChange({ ...params, value })} />
+        )}
+        {release}
+      </>
+    );
+  }
+  if (kind === "previewstep") {
+    return (
+      <>
+        <SelectField label="Direction" value={mode("next")} options={["next", "previous"]} labels={["Next", "Previous"]} onChange={setMode} />
+        {release}
+      </>
+    );
+  }
+  if (kind === "ptz") {
+    return (
+      <>
+        {input}
+        <SelectField
+          label="Move"
+          value={mode("home")}
+          options={["home", "up", "down", "left", "right", "stop", "zoomin", "zoomout", "zoomstop", "focus"]}
+          labels={["Home", "Up", "Down", "Left", "Right", "Stop", "Zoom in", "Zoom out", "Zoom stop", "Focus auto"]}
+          onChange={setMode}
+        />
+        {release}
+      </>
+    );
+  }
+  if (kind === "replaycamera") {
+    return (
+      <>
+        <SelectField label="Channel" value={params.channel || "selected"} options={["selected", "a", "b"]} labels={["Selected", "A", "B"]} onChange={(channel) => onChange({ ...params, channel: channel === "selected" ? "" : channel })} />
+        <NumberSelect label="Camera" value={Number(params.index) || 1} max={8} onChange={(index) => onChange({ ...params, index: String(index) })} />
+        {release}
+      </>
+    );
+  }
+  if (kind === "datasource") {
+    return (
+      <>
+        <SelectField
+          label="Action"
+          value={mode("next")}
+          options={["next", "previous", "playpause"]}
+          labels={["Next row", "Previous row", "Play / Pause"]}
+          onChange={setMode}
+        />
+        <TextField label="Name" value={params.value} onChange={(value) => onChange({ ...params, value })} />
+        {release}
+      </>
+    );
+  }
+  return <>{release}</>;
 }
 
 function showsInput(kind: string, params: ActionParams) {

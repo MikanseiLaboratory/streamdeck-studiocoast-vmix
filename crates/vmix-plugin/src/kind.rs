@@ -18,6 +18,22 @@ pub enum ActionKind {
     Play,
     List,
     Title,
+    Loop,
+    Playlist,
+    Restart,
+    QuickPlay,
+    Snapshot,
+    Go,
+    Countdown,
+    Browser,
+    Script,
+    Preset,
+    PreviewStep,
+    Ptz,
+    ReplayCamera,
+    AudioAuto,
+    SoloAllOff,
+    DataSource,
     Shortcut,
     Raw,
     RawDial,
@@ -38,6 +54,20 @@ impl ActionKind {
             Self::Transition
                 | Self::Stinger
                 | Self::Title
+                | Self::Restart
+                | Self::QuickPlay
+                | Self::Snapshot
+                | Self::Go
+                | Self::Countdown
+                | Self::Browser
+                | Self::Script
+                | Self::Preset
+                | Self::PreviewStep
+                | Self::Ptz
+                | Self::ReplayCamera
+                | Self::AudioAuto
+                | Self::SoloAllOff
+                | Self::DataSource
                 | Self::Shortcut
                 | Self::Raw
                 | Self::RawDial
@@ -55,7 +85,25 @@ impl ActionKind {
     pub fn confirms_press(self) -> bool {
         matches!(
             self,
-            Self::Transition | Self::Stinger | Self::Title | Self::Shortcut | Self::Raw
+            Self::Transition
+                | Self::Stinger
+                | Self::Title
+                | Self::Restart
+                | Self::QuickPlay
+                | Self::Snapshot
+                | Self::Go
+                | Self::Countdown
+                | Self::Browser
+                | Self::Script
+                | Self::Preset
+                | Self::PreviewStep
+                | Self::Ptz
+                | Self::ReplayCamera
+                | Self::AudioAuto
+                | Self::SoloAllOff
+                | Self::DataSource
+                | Self::Shortcut
+                | Self::Raw
         )
     }
 

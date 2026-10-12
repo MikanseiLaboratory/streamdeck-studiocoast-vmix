@@ -254,6 +254,9 @@ pub struct ActionParams {
     /// `cutDirect`, `cut`, or `activeInput`. Non-main mixes never send CutDirect.
     #[serde(default = "default_program_mode")]
     pub program_mode: String,
+    /// Mode for a direct action, such as Loop, Playlist, PTZ, or Browser.
+    #[serde(default)]
+    pub command_mode: String,
     /// Bar color while the key is active. Empty keeps the instance color.
     #[serde(default)]
     pub active_color: String,
@@ -337,6 +340,7 @@ impl Default for ActionParams {
             step: default_step(),
             rate_mode: default_rate_mode(),
             mixer_mode: default_mixer_mode(),
+            command_mode: String::new(),
             program_mode: default_program_mode(),
             active_color: String::new(),
             release: ShortcutCall::default(),
