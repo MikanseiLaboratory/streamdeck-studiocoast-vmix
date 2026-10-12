@@ -459,6 +459,7 @@ function ActionFields({
   const release = (
     <ShortcutFields
       label="On release"
+      category={categoryForShortcutKind(kind)}
       call={params.release ?? emptyCall()}
       inputs={inputs}
       mixes={mixes}
