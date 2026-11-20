@@ -454,7 +454,6 @@ fn session(
         }
         if outbound.is_empty() && !interval.is_zero() && Instant::now() >= next_poll {
             outbound.push_back(SendCommand::XML);
-            outbound.push_back(SendCommand::FUNCTION("ActivatorRefresh".into(), None));
             next_poll = Instant::now() + interval;
         }
         if let Some(command) = outbound.pop_front() {
@@ -473,7 +472,6 @@ fn startup_commands() -> Vec<SendCommand> {
     let mut commands = vec![
         SendCommand::SUBSCRIBE(SUBSCRIBECommand::ACTS),
         SendCommand::VERSION,
-        SendCommand::FUNCTION("ActivatorRefresh".into(), None),
         SendCommand::XML,
     ];
     for name in [
@@ -629,6 +627,25 @@ mod tests {
         assert!(rejected.contains("IP address"), "{rejected}");
         assert!(resolve_endpoint("vmix.local", 8099).is_err());
         assert!(resolve_endpoint("  ", 8099).is_err());
+    }
+
+    #[tokio::test]
+    async fn activator_refresh_is_never_sent() {
+        let mock = MockVmix::spawn().await;
+        let pool = VmixPool::new(PoolOptions::for_tests());
+        let mut instance = config("a", mock.port);
+        instance.xml_interval_ms = 20;
+        pool.reconcile(vec![instance], vec![]).await;
+        wait_connected(&pool, &["a"]).await;
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        let commands = mock.commands().await;
+        assert!(commands.iter().any(|command| command == "XML"));
+        assert!(
+            !commands
+                .iter()
+                .any(|command| command.contains("ActivatorRefresh")),
+            "ActivatorRefresh only refreshes vMix hardware activator devices; ACTS and XML already carry this client's state"
+        );
     }
 
     #[tokio::test]
